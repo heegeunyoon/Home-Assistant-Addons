@@ -1,6 +1,6 @@
 {
   "name": "Kocom Wallpad with RS485",
-  "version": "2026.09.26.3",
+  "version": "2026.11.08.1",
   "slug": "kocom_py",
   "description": "Kocom Wallpad for Home Assistant",
   "arch": [
@@ -10,7 +10,7 @@
     "amd64",
     "i386"
   ],
-  "url": "https://github.com/iuscaler/kocom_wallpad_app_for_homeassistant",
+  "url": "https://github.com/heegeunyoon/Home-Assistant-Addons",
   "startup": "application",
   "boot": "auto",
   "uart": true,
@@ -31,34 +31,116 @@
     "mqtt_username": "",
     "mqtt_password": "",
     "devices": [
-      {"type": "light",  "room": "livingroom"},
-      {"type": "light",  "room": "livingroom"},
-      {"type": "light",  "room": "room1"},
-      {"type": "light",  "room": "room1"},
-      {"type": "light",  "room": "room2"},
-      {"type": "light",  "room": "room3"},
-      {"type": "light",  "room": "kitchen"},
-      {"type": "light",  "room": "kitchen"},
-      {"type": "fan",    "room": "livingroom"},
-      {"type": "thermo", "room": "livingroom"},
-      {"type": "thermo", "room": "room1"},
-      {"type": "thermo", "room": "room2"},
-      {"type": "thermo", "room": "room3"},
-      {"type": "aircon", "room": "room1"},
-      {"type": "elevator"},
-      {"type": "motion"},
-      {"type": "outlet",  "room": "livingroom"},
-      {"type": "outlet",  "room": "livingroom"},
-      {"type": "outlet",  "room": "room1"},
-      {"type": "outlet",  "room": "room1"},
-      {"type": "outlet",  "room": "room2"},
-      {"type": "outlet",  "room": "room2"},
-      {"type": "outlet",  "room": "room2"},
-      {"type": "outlet",  "room": "room3"},
-      {"type": "outlet",  "room": "room3"},
-      {"type": "outlet",  "room": "room3"},
-      {"type": "outlet",  "room": "kitchen"},
-      {"type": "outlet",  "room": "kitchen"}
+      {
+        "type": "light",
+        "room": "livingroom"
+      },
+      {
+        "type": "light",
+        "room": "livingroom"
+      },
+      {
+        "type": "light",
+        "room": "room1"
+      },
+      {
+        "type": "light",
+        "room": "room1"
+      },
+      {
+        "type": "light",
+        "room": "room2"
+      },
+      {
+        "type": "light",
+        "room": "room3"
+      },
+      {
+        "type": "light",
+        "room": "kitchen"
+      },
+      {
+        "type": "light",
+        "room": "kitchen"
+      },
+      {
+        "type": "fan",
+        "room": "livingroom"
+      },
+      {
+        "type": "thermo",
+        "room": "livingroom"
+      },
+      {
+        "type": "thermo",
+        "room": "room1"
+      },
+      {
+        "type": "thermo",
+        "room": "room2"
+      },
+      {
+        "type": "thermo",
+        "room": "room3"
+      },
+      {
+        "type": "aircon",
+        "room": "room1"
+      },
+      {
+        "type": "elevator"
+      },
+      {
+        "type": "motion"
+      },
+      {
+        "type": "outlet",
+        "room": "livingroom"
+      },
+      {
+        "type": "outlet",
+        "room": "livingroom"
+      },
+      {
+        "type": "outlet",
+        "room": "room1"
+      },
+      {
+        "type": "outlet",
+        "room": "room1"
+      },
+      {
+        "type": "outlet",
+        "room": "room2"
+      },
+      {
+        "type": "outlet",
+        "room": "room2"
+      },
+      {
+        "type": "outlet",
+        "room": "room2"
+      },
+      {
+        "type": "outlet",
+        "room": "room3"
+      },
+      {
+        "type": "outlet",
+        "room": "room3"
+      },
+      {
+        "type": "outlet",
+        "room": "room3"
+      },
+      {
+        "type": "outlet",
+        "room": "kitchen"
+      },
+      {
+        "type": "outlet",
+        "room": "kitchen"
+      }
     ],
     "elevator_type": "rs485",
     "rs485_floor": 7,
