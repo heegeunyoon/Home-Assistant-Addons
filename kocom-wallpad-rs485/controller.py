@@ -208,7 +208,10 @@ class KocomController:
         idx        = frame.dev_room
         heat_mode  = 'heat' if (frame.payload[0] >> 4) == 0x01 else 'off'
         away       = (frame.payload[1] & 0x0F) == 0x01
-        set_temp   = float(frame.payload[2])
+        init_temp  = float(self._config.get('User', 'init_temp', fallback='23'))
+        # 난방이 꺼진 프레임에서는 payload[2]가 0 또는 무효값일 수
+        # 있으므로 HA에는 기본 설정온도를 유지해 표시한다.
+        set_temp   = float(frame.payload[2]) if heat_mode == 'heat' else init_temp
         cur_temp   = float(frame.payload[4])
         hot_temp   = frame.payload[3]
         heat_temp  = frame.payload[5]
