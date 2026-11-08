@@ -207,6 +207,8 @@ class KocomController:
             return
         idx        = frame.dev_room
         heat_mode  = 'heat' if (frame.payload[0] >> 4) == 0x01 else 'off'
+        init_temp  = float(self._config.get('User', 'init_temp', fallback='23'))
+        set_temp   = float(frame.payload[2]) if heat_mode == 'heat' else init_temp
         away       = (frame.payload[1] & 0x0F) == 0x01
         set_temp   = float(frame.payload[2])
         cur_temp   = float(frame.payload[4])
