@@ -32,6 +32,14 @@ import aiomqtt  # type: ignore
 from const import SW_VERSION, ROOM_CODE, VENT_PRESET_SUPPORTED
 
 AVAILABILITY_TOPIC = 'kocom/bridge/availability'
+
+# 이전 버전이 발행했지만 지금은 만들지 않는 엔티티의 Discovery 토픽.
+# retain으로 브로커에 남아 있으면 HA가 엔티티를 계속 유지하므로, 빈 페이로드를
+# retain으로 발행해 지운다 (MQTT Discovery의 엔티티 삭제 규칙).
+OBSOLETE_DISCOVERY_TOPICS = [
+    # 엘리베이터 층수 — 이 세대는 층 정보 바이트가 항상 00이라 2026.09.26.1에서 제거
+    'homeassistant/sensor/kocom_elevator_floor/config',
+]
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
 
 log = logging.getLogger(__name__)
@@ -279,8 +287,12 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
                 # 온도를 되돌리려 하지 않는다.
                 'pr_mode_cmd_t':   f'kocom/room/thermo/{idx}/away/command',
                 'pr_mode_stat_t':  f'kocom/room/thermo/{idx}/state',
+                # 상태가 'none'이면 HA가 preset 해제로 처리하고, 사용자가 '없음'을
+                # 고르면 HA가 'none'을 명령 토픽에 보낸다. 단 preset_modes 목록에는
+                # 'none'을 넣으면 안 된다 — HA가 Discovery 설정 전체를 거부한다
+                # ("preset_modes must not include preset mode 'none'").
                 'pr_mode_val_tpl': "{{ 'away' if value_json.away == 'true' else 'none' }}",
-                'pr_modes': ['none', 'away'],
+                'pr_modes': ['away'],
                 'min_temp': 18, 'max_temp': 30, 'temp_step': 1,  # 설정 가능 범위 18~30°C, 1°C 단위
                 'qos': 0,
                 'uniq_id': f'kocom_wallpad_thermo_{room}',
@@ -505,5 +517,9 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
         'uniq_id': 'kocom_wallpad_query',
         'device':  _BASE_DEVICE,
     })
+
+    # ── 더 이상 쓰지 않는 엔티티 정리 ──────────────────────────────────
+    for topic in OBSOLETE_DISCOVERY_TOPICS:
+        await mqtt.publish(topic, b'', retain=True)
 
     log.info('[Discovery] HA MQTT discovery published.')
