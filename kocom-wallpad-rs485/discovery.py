@@ -120,6 +120,16 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
     # 순회 중 각 (type, room)의 현재 순번 추적 (1부터 증가)
     occ_seq: dict[tuple, int] = {}
 
+    # 방3 콘센트를 단일 장치로 줄인 경우, 이전에 발행된 번호형
+    # retained Discovery 설정을 제거한다. 그렇지 않으면 과거의
+    # outlet_1/2/3 엔티티가 MQTT 브로커에 계속 남는다.
+    if occ_total.get(('outlet', 'room3'), 0) <= 1:
+        for stale_n in range(1, 9):
+            await mqtt.publish(
+                f'homeassistant/switch/kocom_room3_outlet{stale_n}/config',
+                b'', retain=True,
+            )
+
     async def pub(topic: str, payload: dict) -> None:
         """dict 페이로드를 JSON으로 직렬화해 retain 플래그와 함께 발행한다.
 
