@@ -281,7 +281,7 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
                 'pr_mode_stat_t':  f'kocom/room/thermo/{idx}/state',
                 'pr_mode_val_tpl': "{{ 'away' if value_json.away == 'true' else 'none' }}",
                 'pr_modes': ['none', 'away'],
-                'min_temp': 18, 'max_temp': 30, 'temp_step': 1,  # 설정 가능 범위 18~30°C, 1°C 단위
+                'min_temp': 5, 'max_temp': 30, 'temp_step': 1,  # 설정 가능 범위 5~30°C, 1°C 단위
                 'qos': 0,
                 'uniq_id': f'kocom_wallpad_thermo_{room}',
                 'device':  _sub_device(room, 'thermo', '온도조절기'),
@@ -355,7 +355,8 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
                 'min_temp': 18, 'max_temp': 30, 'temp_step': 1,  # 설정 가능 범위 18~30°C
                 'qos': 0,
                 'uniq_id': f'kocom_wallpad_aircon_{room}',
-                'device':  _sub_device(room, 'aircon', '에어컨'),
+                # 에어컨은 별도 HA 기기를 만들지 않고 월패드 본체에 직접 소속시킨다.
+                'device':  _BASE_DEVICE,
             })
 
         # ── 동작 감지 센서 (binary_sensor 컴포넌트, device_class=motion) ─
