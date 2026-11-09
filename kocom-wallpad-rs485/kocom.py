@@ -113,11 +113,15 @@ class KocomBridge:
             await asyncio.sleep(POLLING_INTERVAL)
 
     async def _poll_once(self) -> None:
-        for entry in self._config.get_devices():
-            dev = entry.get('type', '')
+        # devices 배열은 Discovery 개수를 표현하기 위해 같은 (type, room)이
+        # 반복된다. 폴링은 물리 장치/논리 방 조합마다 한 번만 수행한다.
+        targets = {
+            (entry.get('type', ''), entry.get('room', 'livingroom'))
+            for entry in self._config.get_devices()
+        }
+        for dev, room in sorted(targets):
             if dev in NO_POLL_DEVICES or dev == 'fan' or dev not in CODE_DEVICE:
                 continue
-            room = entry.get('room', 'livingroom')
             if dev == 'outlet':
                 for packet in self._ctrl.build_outlet_queries(room):
                     await self._tx_queue.put(packet)
