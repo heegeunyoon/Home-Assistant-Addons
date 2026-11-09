@@ -31,7 +31,13 @@ async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
     다른 통합의 Discovery 설정은 건드리지 않는다.
     """
     topic_filter = 'homeassistant/+/+/config'
-    await client.subscribe(topic_filter, qos=0)
+    try:
+        await client.subscribe(topic_filter, qos=0)
+    except Exception as exc:
+        # 제한된 외부 브로커 ACL에서 Discovery 구독이 거부되더라도
+        # 애드온 기동은 계속하고 publish_discovery의 알려진 토픽 정리에 맡긴다.
+        log.warning('[Discovery] Wildcard retained scan unavailable: %r', exc)
+        return 0
     iterator = client.messages.__aiter__()
     topics: set[str] = set()
     loop = asyncio.get_running_loop()
@@ -45,6 +51,8 @@ async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
         try:
             msg = await asyncio.wait_for(anext(iterator), timeout=timeout)
         except asyncio.TimeoutError:
+            break
+        except StopAsyncIteration:
             break
         topic = str(msg.topic)
         if getattr(msg, 'retain', False):
