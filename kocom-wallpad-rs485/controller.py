@@ -186,6 +186,19 @@ class KocomController:
     def _room(self, room_byte: int) -> str:
         return ROOM_NAME.get(room_byte, f'room{room_byte}')
 
+    def _switch_count(self, dev: str, room: str) -> int:
+        configured = sum(
+            1 for entry in self._config.get_devices()
+            if entry.get('type') == dev
+            and entry.get('room', 'livingroom') == room
+        )
+        if configured:
+            return configured
+        if dev == 'outlet':
+            return sum(1 for _, (mapped_room, _) in OUTLET_ROOM_MAP.items()
+                       if mapped_room == room)
+        return 1
+
     # ── 장치별 파싱 및 발행 ──────────────────────────────────────
     async def _pub_cutoff(self, frame: PacketFrame) -> None:
         """전체 소등 브로드캐스트 (0x09, 방 코드 0xFF).
@@ -213,17 +226,8 @@ class KocomController:
                 log.debug('[Outlet] Ignore unknown physical address 0x%02x', frame.dev_room)
                 return
             room, index = mapped
-            configured_count = sum(
-                1 for entry in self._config.get_devices()
-                if entry.get('type') == 'outlet'
-                and entry.get('room', 'livingroom') == room
-            )
-            # 해당 방에 outlet 설정이 하나도 없으면, 알려진 물리 주소 수를
-            # 이번 실행의 발견 기준으로 사용한다.
-            count = configured_count or max(
-                channel for _, (mapped_room, channel) in OUTLET_ROOM_MAP.items()
-                if mapped_room == room
-            )
+            # config가 없으면 물리 주소 매핑에 정의된 채널 수를 사용한다.
+            count = self._switch_count('outlet', room)
             if index > count:
                 return
             topic = f'kocom/{room}/outlet/state'
@@ -513,7 +517,7 @@ class KocomController:
 
     def build_outlet_queries(self, room: str) -> list[bytes]:
         """논리 방의 설정된 콘센트 각각을 물리 주소로 조회한다."""
-        count = self._config.get_switch_count('outlet', room)
+        count = self._switch_count('outlet', room)
         packets = []
         for index in range(1, count + 1):
             address = OUTLET_ADDRESS_MAP.get((room, index))
@@ -568,7 +572,7 @@ class KocomController:
         dest_dev  = CODE_DEVICE[dev]
         cache_key = f'kocom/{room}/{dev}/state'
         cached    = self._state_cache.get(cache_key, {})
-        count = self._config.get_switch_count(dev, room)
+        count = self._switch_count(dev, room)
 
         if dev == 'outlet':
             requested = kwargs.get('index', 1)
