@@ -110,7 +110,6 @@ class KocomController:
             'outlet': frame.command == CMD_STATE,
             'thermo': frame.command == CMD_STATE,
             'aircon': frame.command == CMD_STATE,
-            'airquality': frame.command in (CMD_STATE, CMD_QUERY),
         }
         if frame.is_state_report and discoverable.get(dt, False) and self._on_device:
             if dt == 'outlet':
@@ -140,8 +139,6 @@ class KocomController:
             await self._pub_elevator(frame)
         elif dt == 'motion':
             await self._pub_motion(frame)
-        elif dt == 'airquality':
-            await self._pub_airquality(frame)
         elif dt == 'timesync':
             # 월패드가 0x86으로 보내는 시각 브로드캐스트 (YY MM DD HH MM SS)
             if frame.command == CMD_ON:
