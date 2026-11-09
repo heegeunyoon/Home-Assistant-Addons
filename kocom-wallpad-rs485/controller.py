@@ -213,7 +213,17 @@ class KocomController:
                 log.debug('[Outlet] Ignore unknown physical address 0x%02x', frame.dev_room)
                 return
             room, index = mapped
-            count = self._config.get_switch_count('outlet', room)
+            configured_count = sum(
+                1 for entry in self._config.get_devices()
+                if entry.get('type') == 'outlet'
+                and entry.get('room', 'livingroom') == room
+            )
+            # 해당 방에 outlet 설정이 하나도 없으면, 알려진 물리 주소 수를
+            # 이번 실행의 발견 기준으로 사용한다.
+            count = configured_count or max(
+                channel for _, (mapped_room, channel) in OUTLET_ROOM_MAP.items()
+                if mapped_room == room
+            )
             if index > count:
                 return
             topic = f'kocom/{room}/outlet/state'
@@ -514,6 +524,14 @@ class KocomController:
                 CODE_DEVICE['outlet'], address, 0x01, 0x00, CMD_QUERY, bytes(8)
             ))
         return packets
+
+    def build_all_outlet_queries(self) -> list[bytes]:
+        """설정과 무관하게 알려진 콘센트 물리 주소를 안전하게 한 번씩 조회한다."""
+        return [
+            self._make_packet(CODE_DEVICE['outlet'], address, 0x01, 0x00,
+                              CMD_QUERY, bytes(8))
+            for address in sorted(OUTLET_ROOM_MAP)
+        ]
 
     def build_command(self, dev: str, room: str, action: str, **kwargs) -> List[bytes]:
         """
