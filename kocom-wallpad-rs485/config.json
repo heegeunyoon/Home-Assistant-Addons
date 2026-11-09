@@ -1,6 +1,6 @@
 {
   "name": "Kocom Wallpad with RS485",
-  "version": "2026.11.09.1",
+  "version": "2026.11.09.2",
   "slug": "kocom_py",
   "description": "Kocom Wallpad for Home Assistant",
   "arch": [
@@ -56,18 +56,6 @@
         "room": "room3"
       },
       {
-        "type": "light",
-        "room": "kitchen"
-      },
-      {
-        "type": "light",
-        "room": "kitchen"
-      },
-      {
-        "type": "fan",
-        "room": "livingroom"
-      },
-      {
         "type": "thermo",
         "room": "livingroom"
       },
@@ -85,13 +73,19 @@
       },
       {
         "type": "aircon",
+        "room": "livingroom"
+      },
+      {
+        "type": "aircon",
         "room": "room1"
       },
       {
-        "type": "elevator"
+        "type": "aircon",
+        "room": "room2"
       },
       {
-        "type": "motion"
+        "type": "aircon",
+        "room": "room3"
       },
       {
         "type": "outlet",
@@ -108,14 +102,6 @@
       {
         "type": "outlet",
         "room": "room1"
-      },
-      {
-        "type": "outlet",
-        "room": "room2"
-      },
-      {
-        "type": "outlet",
-        "room": "room2"
       },
       {
         "type": "outlet",
@@ -132,6 +118,17 @@
       {
         "type": "outlet",
         "room": "kitchen"
+      },
+      {
+        "type": "gas",
+        "room": "livingroom"
+      },
+      {
+        "type": "elevator"
+      },
+      {
+        "type": "motion",
+        "room": "livingroom"
       }
     ],
     "elevator_type": "rs485",
@@ -154,7 +151,7 @@
     "mqtt_password": "password?",
     "devices": [
       {
-        "type": "list(light|outlet|fan|thermo|aircon|gas|elevator|motion|airquality)",
+        "type": "list(light|outlet|thermo|aircon|gas|elevator|motion|airquality)",
         "room": "list(livingroom|room1|room2|room3|kitchen)?"
       }
     ],
