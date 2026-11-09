@@ -125,7 +125,7 @@ class KocomBridge:
         key = (dev, room)
         if key in self._configured_devices or key in self._discovered_devices:
             return
-        if dev in ('gas', 'elevator', 'motion', 'fan'):
+        if dev in ('gas', 'elevator', 'motion', 'fan', 'airquality'):
             return
         self._discovered_devices.add(key)
         extra: list[dict] = []
@@ -205,7 +205,7 @@ class KocomBridge:
             await asyncio.sleep(0.3)
 
         # 나머지 장치는 기존 방 코드 체계로 조회한다.
-        for dev in ('light', 'thermo', 'aircon', 'airquality'):
+        for dev in ('light', 'thermo', 'aircon'):
             for room in ROOM_CODE:
                 await self._tx_queue.put(self._ctrl.build_query(dev, room))
                 await asyncio.sleep(0.3)
@@ -219,7 +219,7 @@ class KocomBridge:
             for entry in self._config.get_devices()
         } | self._discovered_devices
         for dev, room in sorted(targets):
-            if dev in NO_POLL_DEVICES or dev == 'fan' or dev not in CODE_DEVICE:
+            if dev in NO_POLL_DEVICES or dev in ('fan', 'airquality') or dev not in CODE_DEVICE:
                 continue
             if dev == 'outlet':
                 for packet in self._ctrl.build_outlet_queries(room):
