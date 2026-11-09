@@ -71,9 +71,9 @@ def _rname(room: str) -> str:
 def _discovery_topic_candidates(occ_total: Counter) -> set[str]:
     """현재/과거 설정에서 생길 수 있는 방별 Discovery 토픽 후보를 만든다.
 
-    MQTT retained 메시지는 브로커에서 wildcard 구독으로 목록을 열거할 수
-    없으므로, 이 애드온이 사용하는 고정된 토픽 규칙을 기준으로 후보를 만든다.
-    단일 장치 토픽과 번호형(최대 기존 정리 범위 8개)을 모두 포함한다.
+    주 시작 루틴은 wildcard 구독으로 현재 retained 토픽을 먼저 정리한다.
+    여기서는 구버전/기존 규칙으로 생성된 토픽을 보완 정리할 수 있도록
+    알려진 단일·번호형(최대 8개) 후보도 구성한다.
     """
     topics: set[str] = set()
 
