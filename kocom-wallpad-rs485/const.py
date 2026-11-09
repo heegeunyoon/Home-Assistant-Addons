@@ -71,6 +71,23 @@ ROOM_NAME: dict[int, str] = {
 }
 ROOM_CODE: dict[str, int] = {v: k for k, v in ROOM_NAME.items()}
 
+# 콘센트는 조명·난방·에어컨과 다른 RS-485 방 주소 체계를 사용한다.
+# 물리 주소(byte4) → (HA 논리 방, 해당 방의 콘센트 순번).
+OUTLET_ROOM_MAP: dict[int, tuple[str, int]] = {
+    0x00: ('livingroom', 1),
+    0x01: ('livingroom', 2),
+    0x02: ('room1', 1),
+    0x03: ('room1', 2),
+    0x04: ('room2', 1),
+    0x05: ('room3', 1),
+    0x06: ('kitchen', 1),
+    0x07: ('kitchen', 2),
+}
+OUTLET_ADDRESS_MAP: dict[tuple[str, int], int] = {
+    (room, index): address
+    for address, (room, index) in OUTLET_ROOM_MAP.items()
+}
+
 # ── 에어컨 모드 ──────────────────────────────────────────────────
 AIRCON_HVAC_CODE: dict[str, int] = {
     'cool': 0x00, 'fan_only': 0x01, 'dry': 0x02, 'auto': 0x03,
