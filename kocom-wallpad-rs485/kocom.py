@@ -16,7 +16,7 @@ import aiomqtt  # type: ignore
 from const import (
     SW_VERSION,
     IDLE_GAP, SEND_RETRY, SEND_RETRY_GAP, POLLING_INTERVAL,
-    CODE_DEVICE, NO_POLL_DEVICES,
+    CODE_DEVICE, NO_POLL_DEVICES, ROOM_CODE, OUTLET_ROOM_MAP,
     DIAG_INTERVAL, BUS_ALIVE_TIMEOUT, TIME_DRIFT_WARN, AWAY_STEP_GAP,
 )
 
@@ -134,9 +134,29 @@ class KocomBridge:
     async def _poll_loop(self) -> None:
         log.info('[Bridge] Poll loop started.')
         await asyncio.sleep(3)
+        await self._discovery_scan_once()
         while True:
             await self._poll_once()
             await asyncio.sleep(POLLING_INTERVAL)
+
+    async def _discovery_scan_once(self) -> None:
+        """재시작 직후 안전한 조회를 보내 설정 밖 장치를 다시 발견한다.
+
+        상태 조회만 지원하는 조명·콘센트·난방·에어컨·공기질 장치만 대상으로 한다.
+        가스·엘리베이터·현관 이벤트 센서·환기장치는 조회하지 않는다.
+        """
+        log.info('[Discovery] Starting one-time safe RS485 device scan.')
+        # 콘센트는 독립된 물리 주소 8개를 각각 조회한다.
+        for packet in self._ctrl.build_all_outlet_queries():
+            await self._tx_queue.put(packet)
+            await asyncio.sleep(0.3)
+
+        # 나머지 장치는 기존 방 코드 체계로 조회한다.
+        for dev in ('light', 'thermo', 'aircon', 'airquality'):
+            for room in ROOM_CODE:
+                await self._tx_queue.put(self._ctrl.build_query(dev, room))
+                await asyncio.sleep(0.3)
+        log.info('[Discovery] Safe device scan queries queued.')
 
     async def _poll_once(self) -> None:
         # devices 배열은 Discovery 개수를 표현하기 위해 같은 (type, room)이
