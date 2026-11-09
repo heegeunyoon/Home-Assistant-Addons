@@ -68,6 +68,43 @@ def _rname(room: str) -> str:
     return _ROOM_KO.get(room, room)
 
 
+def _discovery_topic_candidates(occ_total: Counter) -> set[str]:
+    """현재/과거 설정에서 생길 수 있는 방별 Discovery 토픽 후보를 만든다.
+
+    MQTT retained 메시지는 브로커에서 wildcard 구독으로 목록을 열거할 수
+    없으므로, 이 애드온이 사용하는 고정된 토픽 규칙을 기준으로 후보를 만든다.
+    단일 장치 토픽과 번호형(최대 기존 정리 범위 8개)을 모두 포함한다.
+    """
+    topics: set[str] = set()
+
+    for room in _ROOM_KO:
+        for kind, component in (('light', 'light'), ('outlet', 'switch')):
+            max_count = max(8, occ_total.get((kind, room), 0))
+            for n in range(max_count + 1):
+                suffix = str(n) if n else ''
+                topics.add(
+                    f'homeassistant/{component}/kocom_{room}_{kind}{suffix}/config'
+                )
+
+        topics.update({
+            f'homeassistant/fan/kocom_{room}_fan/config',
+            f'homeassistant/sensor/kocom_{room}_fan_co2/config',
+            f'homeassistant/sensor/kocom_{room}_fan_timer/config',
+            f'homeassistant/climate/kocom_{room}_thermostat/config',
+            f'homeassistant/climate/kocom_{room}_aircon/config',
+            f'homeassistant/switch/kocom_{room}_gas/config',
+            f'homeassistant/binary_sensor/kocom_{room}_motion/config',
+        })
+        for aq_key in ('pm10', 'pm25', 'co2', 'voc', 'temp', 'humidity'):
+            topics.add(f'homeassistant/sensor/kocom_{room}_aq_{aq_key}/config')
+
+    topics.update({
+        'homeassistant/switch/kocom_elevator/config',
+        'homeassistant/sensor/kocom_elevator_direction/config',
+    })
+    return topics
+
+
 def _sub_device(room: str, kind: str, kind_ko: str) -> dict:
     """방 안의 물리 모듈 단위 기기(device) 정보를 생성한다.
 
@@ -120,15 +157,8 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
     # 순회 중 각 (type, room)의 현재 순번 추적 (1부터 증가)
     occ_seq: dict[tuple, int] = {}
 
-    # 방3 콘센트를 단일 장치로 줄인 경우, 이전에 발행된 번호형
-    # retained Discovery 설정을 제거한다. 그렇지 않으면 과거의
-    # outlet_1/2/3 엔티티가 MQTT 브로커에 계속 남는다.
-    if occ_total.get(('outlet', 'room3'), 0) <= 1:
-        for stale_n in range(1, 9):
-            await mqtt.publish(
-                f'homeassistant/switch/kocom_room3_outlet{stale_n}/config',
-                b'', retain=True,
-            )
+    # 이번 실행에서 발행한 토픽과 과거 설정의 잔존 토픽을 비교해 정리한다.
+    published_topics: set[str] = set()
 
     async def pub(topic: str, payload: dict) -> None:
         """dict 페이로드를 JSON으로 직렬화해 retain 플래그와 함께 발행한다.
@@ -140,6 +170,7 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
         payload.setdefault('pl_avail', 'online')
         payload.setdefault('pl_not_avail', 'offline')
         await mqtt.publish(topic, json.dumps(payload), retain=True)
+        published_topics.add(topic)
 
     for entry in dev_list:
         dev  = entry.get('type', '')                 # 기기 종류 (light, outlet, fan, ...)
@@ -517,4 +548,18 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
         'device':  _BASE_DEVICE,
     })
 
-    log.info('[Discovery] HA MQTT discovery published.')
+    # 현재 설정에서 발행하지 않는 과거 retained Discovery를 제거한다.
+    # 빈 payload + retain=True는 MQTT 브로커에서 해당 retained 메시지를 삭제한다.
+    stale_topics = _discovery_topic_candidates(occ_total) - published_topics
+    for topic in sorted(stale_topics):
+        await mqtt.publish(topic, b'', retain=True)
+
+    if stale_topics:
+        log.info(
+            '[Discovery] Removed %d stale retained discovery topics.',
+            len(stale_topics),
+        )
+    log.info(
+        '[Discovery] HA MQTT discovery published (%d topics).',
+        len(published_topics),
+    )
