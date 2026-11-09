@@ -23,6 +23,17 @@ from const import (
 AVAILABILITY_TOPIC = 'kocom/bridge/availability'
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
 
+from controller import KocomController
+from discovery import publish_discovery
+from options import Options
+from transport import AsyncRS485
+
+logging.basicConfig(
+    format='%(levelname)s[%(asctime)s]: %(message)s',
+    level=logging.INFO,
+)
+log = logging.getLogger(__name__)
+
 async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
     """브로커가 보유한 코콤 MQTT Discovery retained 설정을 구독해 전부 제거한다.
 
@@ -68,16 +79,6 @@ async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
     log.info('[Discovery] Removed %d retained Kocom Discovery topics from broker.', len(topics))
     return len(topics)
 
-from controller import KocomController
-from discovery import publish_discovery
-from options import Options
-from transport import AsyncRS485
-
-logging.basicConfig(
-    format='%(levelname)s[%(asctime)s]: %(message)s',
-    level=logging.INFO,
-)
-log = logging.getLogger(__name__)
 
 
 class KocomBridge:
