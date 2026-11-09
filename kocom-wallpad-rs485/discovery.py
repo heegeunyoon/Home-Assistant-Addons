@@ -29,7 +29,7 @@ from collections import Counter
 
 import aiomqtt  # type: ignore
 
-from const import SW_VERSION, ROOM_CODE
+from const import SW_VERSION, ROOM_CODE, VENT_PRESET_SUPPORTED
 
 AVAILABILITY_TOPIC = 'kocom/bridge/availability'
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
@@ -193,8 +193,6 @@ async def publish_discovery(
 
     for entry in dev_list:
         dev  = entry.get('type', '')                 # 기기 종류
-        if dev in ('fan', 'airquality'):
-            continue  # 월패드에서 제어·상태 확인이 불가능한 장치는 등록하지 않음
         room = entry.get('room', 'livingroom')       # 방 이름 (미지정 시 거실)
         rko  = _rname(room)                          # 한국어 방 이름
         key  = (dev, room)
@@ -264,6 +262,58 @@ async def publish_discovery(
                     'uniq_id': f'kocom_wallpad_outlet_{room}_{n}',
                     'device':  _sub_device(room, 'outlet', '콘센트'),
                 })
+
+        # ── 환기장치 (fan 컴포넌트) + 부속 센서 2종 ──────────────────────
+        # 환기장치 본체 1개와, 같은 기기에 묶이는 CO₂ 센서·예약 끄기 타이머
+        # 센서까지 총 3개의 엔티티를 발행한다.
+        elif dev == 'fan':
+            await pub(f'homeassistant/fan/kocom_{room}_fan/config', {
+                'name':            f'{rko} 환기장치',
+                'cmd_t':           f'kocom/{room}/fan/command',
+                'stat_t':          f'kocom/{room}/fan/state',
+                'stat_val_tpl':    '{{ value_json.state }}',
+                # 프리셋 모드(환기/자동/바이패스/취침/공기청정) 상태·명령 토픽
+                'pr_mode_stat_t':  f'kocom/{room}/fan/state',
+                'pr_mode_val_tpl': '{{ value_json.preset }}',
+                'pr_mode_cmd_t':   f'kocom/{room}/fan/set_preset_mode/command',
+                'pr_mode_cmd_tpl': '{{ value }}',
+                # 'air purification'(0x08)은 실측에서 관측되지 않아 제외한다.
+                'pr_modes': list(VENT_PRESET_SUPPORTED),
+                # 풍량: 월패드 원시값(64/128/192)을 HA 단계값(1/2/3)으로 변환
+                'pct_cmd_t':       f'kocom/{room}/fan/set_speed/command',
+                'pct_stat_t':      f'kocom/{room}/fan/state',
+                'pct_val_tpl':     '{{ {64: 1, 128: 2, 192: 3}.get(value_json.speed | int, 0) }}',
+                'spd_rng_min': 1,   # 풍량 최소 단계
+                'spd_rng_max': 3,   # 풍량 최대 단계
+                'pl_on': 'on', 'pl_off': 'off', 'qos': 0,
+                'uniq_id': f'kocom_wallpad_fan_{room}',
+                'device':  _sub_device(room, 'fan', '환기장치'),
+            })
+            # 환기장치에 내장된 CO₂ 농도 센서 (단위: ppm)
+            await pub(f'homeassistant/sensor/kocom_{room}_fan_co2/config', {
+                'name':         f'{rko} CO₂',
+                'stat_t':       f'kocom/{room}/fan/co2',
+                'val_tpl':      '{{ value_json.value }}',
+                'dev_cla':      'carbon_dioxide',
+                'unit_of_meas': 'ppm',
+                'ic':           'mdi:molecule-co2',
+                'qos': 0,
+                # CO₂ 센서는 환기장치에 내장되어 있으므로 같은 device에 묶는다
+                'uniq_id': f'kocom_wallpad_fan_co2_{room}',
+                'device':  _sub_device(room, 'fan', '환기장치'),
+            })
+            # 환기장치 예약 끄기까지 남은 시간 센서 (단위: 시간)
+            await pub(f'homeassistant/sensor/kocom_{room}_fan_timer/config', {
+                'name':         f'{rko} 환기장치 예약 끄기',
+                'stat_t':       f'kocom/{room}/fan/state',
+                'val_tpl':      '{{ value_json.timer }}',
+                'unit_of_meas': 'h',
+                'ic':           'mdi:timer-outline',
+                'qos': 0,
+                # 타이머 역시 환기장치 본체 기능이므로 같은 device에 묶는다
+                'uniq_id': f'kocom_wallpad_fan_timer_{room}',
+                'device':  _sub_device(room, 'fan', '환기장치'),
+            })
 
         # ── 난방 온도조절기 (climate 컴포넌트) ───────────────────────────
         # 다른 기기와 달리 토픽 경로에 방 이름 대신 월패드 프로토콜상의
@@ -388,6 +438,30 @@ async def publish_discovery(
                 'uniq_id': f'kocom_wallpad_motion_{room}',
                 'device':  _sub_device(room, 'motion', '센서 (용도 미상)'),
             })
+
+        # ── 공기질 측정기 (sensor 컴포넌트 6종) ──────────────────────────
+        # 하나의 상태 토픽을 공유하며, 항목별로 센서 엔티티를 나눠 발행한다.
+        # (aq_key: 상태 JSON 키, label: 표시 이름, dev_class: HA 분류, unit: 단위)
+        elif dev == 'airquality':
+            for aq_key, label, dev_class, unit in [
+                ('pm10',     'PM10',  'pm10',                       'µg/m³'),  # 미세먼지
+                ('pm25',     'PM2.5', 'pm25',                       'µg/m³'),  # 초미세먼지
+                ('co2',      'CO₂',   'carbon_dioxide',             'ppm'),    # 이산화탄소
+                ('voc',      'VOC',   'volatile_organic_compounds', 'µg/m³'),  # 휘발성 유기화합물
+                ('temp',     '온도',  'temperature',                '°C'),
+                ('humidity', '습도',  'humidity',                   '%'),
+            ]:
+                await pub(f'homeassistant/sensor/kocom_{room}_aq_{aq_key}/config', {
+                    'name':         f'{rko} 공기질 {label}',
+                    'stat_t':       f'kocom/{room}/airquality/state',
+                    'val_tpl':      '{{ value_json.' + aq_key + ' }}',
+                    'dev_cla':      dev_class,
+                    'unit_of_meas': unit,
+                    'qos': 0,
+                    # 측정 항목 6종은 하나의 공기질 측정기가 제공하므로 한 device에 묶는다
+                    'uniq_id': f'kocom_wallpad_aq_{room}_{aq_key}',
+                    'device':  _sub_device(room, 'airquality', '공기질 측정기'),
+                })
 
     # ── 전체 소등 (switch) ───────────────────────────────────────────────
     # 현관의 일괄 소등 버튼과 같은 브로드캐스트 프레임을 보낸다.
