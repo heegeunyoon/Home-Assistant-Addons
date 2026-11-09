@@ -208,7 +208,7 @@ class KocomBridge:
         targets = {
             (entry.get('type', ''), entry.get('room', 'livingroom'))
             for entry in self._config.get_devices()
-        }
+        } | self._discovered_devices
         for dev, room in sorted(targets):
             if dev in NO_POLL_DEVICES or dev == 'fan' or dev not in CODE_DEVICE:
                 continue
