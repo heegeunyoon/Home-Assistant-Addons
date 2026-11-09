@@ -18,7 +18,6 @@ from const import (
     CODE_DEVICE, ROOM_NAME, ROOM_CODE, OUTLET_ROOM_MAP, OUTLET_ADDRESS_MAP,
     AIRCON_HVAC_CODE, AIRCON_HVAC_NAME,
     AIRCON_FAN_CODE, AIRCON_FAN_NAME,
-    VENT_PRESET_NAME, VENT_PRESET_CODE,
     ELEVATOR_EVENT,
 )
 from models import PacketFrame
@@ -290,28 +289,6 @@ class KocomController:
             'set_temp':  float(frame.payload[5]),
         })
 
-    async def _pub_fan(self, frame: PacketFrame) -> None:
-        if frame.command != CMD_STATE or not frame.is_state_report:
-            return
-        room        = self._room(frame.dev_room)
-        on          = (frame.payload[0] >> 4) == 0x01
-        preset      = VENT_PRESET_NAME.get(frame.payload[1], 'unknown')
-        speed_byte  = frame.payload[2]
-        speed_code  = speed_byte & 0xF0   # 상위 4비트: 0x40/0x80/0xC0
-        timer_hours = speed_byte & 0x0F   # 하위 4비트: 0-15시간
-        co2         = (frame.payload[4] * 100) + frame.payload[5]
-        err         = frame.payload[6]
-        await self._notify(f'kocom/{room}/fan/state', {
-            'state':  'on' if on else 'off',
-            'preset': preset,
-            'speed':  speed_code,
-            'timer':  timer_hours,
-        })
-        if co2 > 0:
-            await self._notify(f'kocom/{room}/fan/co2',   {'value': co2})
-        if err != 0:
-            await self._notify(f'kocom/{room}/fan/error', {'code': err})
-
     async def _pub_gas(self, frame: PacketFrame) -> None:
         """가스밸브/인덕션 상태.
 
@@ -409,21 +386,6 @@ class KocomController:
             return
         away = 'on' if frame.payload[0] == 0xFF else 'off'
         await self._notify('kocom/myhome/away/state', {'state': away})
-
-    async def _pub_airquality(self, frame: PacketFrame) -> None:
-        if frame.command not in (CMD_STATE, CMD_QUERY) or not frame.is_state_report:
-            return
-        room = self._room(frame.dev_room)
-        co2  = int.from_bytes(frame.payload[2:4], 'big')
-        voc  = int.from_bytes(frame.payload[4:6], 'big')
-        await self._notify(f'kocom/{room}/airquality/state', {
-            'pm10':     frame.payload[0],
-            'pm25':     frame.payload[1],
-            'co2':      co2,
-            'voc':      voc,
-            'temp':     frame.payload[6],
-            'humidity': frame.payload[7],
-        })
 
     async def _pub_time(self, frame: PacketFrame, offset: int, with_seconds: bool) -> None:
         """월패드가 알려주는 시각.
