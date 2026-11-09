@@ -16,12 +16,13 @@ import aiomqtt  # type: ignore
 from const import (
     SW_VERSION,
     IDLE_GAP, SEND_RETRY, SEND_RETRY_GAP, POLLING_INTERVAL,
-    CODE_DEVICE, NO_POLL_DEVICES,
+    CODE_DEVICE, NO_POLL_DEVICES, ROOM_CODE, OUTLET_ROOM_MAP,
     DIAG_INTERVAL, BUS_ALIVE_TIMEOUT, TIME_DRIFT_WARN, AWAY_STEP_GAP,
 )
 
 AVAILABILITY_TOPIC = 'kocom/bridge/availability'
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
+
 from controller import KocomController
 from discovery import publish_discovery
 from options import Options
@@ -32,6 +33,52 @@ logging.basicConfig(
     level=logging.INFO,
 )
 log = logging.getLogger(__name__)
+
+async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
+    """브로커가 보유한 코콤 MQTT Discovery retained 설정을 구독해 전부 제거한다.
+
+    MQTT는 retained 메시지를 wildcard 구독에 전달하므로 별도 DB/파일 없이
+    현재 브로커에 남은 실제 토픽을 열거할 수 있다. kocom_ 노드만 대상으로 해
+    다른 통합의 Discovery 설정은 건드리지 않는다.
+    """
+    topic_filter = 'homeassistant/+/+/config'
+    try:
+        await client.subscribe(topic_filter, qos=0)
+    except Exception as exc:
+        # 제한된 외부 브로커 ACL에서 Discovery 구독이 거부되더라도
+        # 애드온 기동은 계속하고 publish_discovery의 알려진 토픽 정리에 맡긴다.
+        log.warning('[Discovery] Wildcard retained scan unavailable: %r', exc)
+        return 0
+    iterator = client.messages.__aiter__()
+    topics: set[str] = set()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 10.0
+    quiet_until = loop.time() + 0.8
+
+    while loop.time() < deadline:
+        timeout = min(quiet_until - loop.time(), deadline - loop.time())
+        if timeout <= 0:
+            break
+        try:
+            msg = await asyncio.wait_for(anext(iterator), timeout=timeout)
+        except asyncio.TimeoutError:
+            break
+        except StopAsyncIteration:
+            break
+        topic = str(msg.topic)
+        if getattr(msg, 'retain', False):
+            parts = topic.split('/')
+            if (len(parts) == 4 and parts[0] == 'homeassistant'
+                    and parts[2].startswith('kocom_') and parts[3] == 'config'):
+                topics.add(topic)
+        quiet_until = loop.time() + 0.8
+
+    for topic in sorted(topics):
+        await client.publish(topic, b'', qos=0, retain=True)
+    await client.unsubscribe(topic_filter)
+    log.info('[Discovery] Removed %d retained Kocom Discovery topics from broker.', len(topics))
+    return len(topics)
+
 
 
 class KocomBridge:
@@ -49,7 +96,14 @@ class KocomBridge:
         self._mqtt     = mqtt
         self._rs485    = AsyncRS485.from_config(config)
         self._tx_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._ctrl     = KocomController(on_state=self._publish, config=config)
+        self._discovered_devices: set[tuple[str, str]] = set()
+        self._configured_devices = {
+            (entry.get('type', ''), entry.get('room', 'livingroom'))
+            for entry in config.get_devices()
+        }
+        self._ctrl = KocomController(
+            on_state=self._publish, config=config, on_device=self._on_device_seen
+        )
         self._last_drift: float = 0.0
 
     # ── 공개 진입점 ──────────────────────────────────────────────
@@ -66,6 +120,31 @@ class KocomBridge:
             await self._rs485.close()
 
     # ── 수신 루프 ────────────────────────────────────────────────
+    async def _on_device_seen(self, dev: str, room: str) -> None:
+        """실제 상태 프레임으로 처음 확인된 미설정 장치를 이번 실행에만 등록."""
+        key = (dev, room)
+        if key in self._configured_devices or key in self._discovered_devices:
+            return
+        if dev in ('gas', 'elevator', 'motion', 'fan', 'airquality'):
+            return
+        self._discovered_devices.add(key)
+        extra: list[dict] = []
+        for kind, name in sorted(self._discovered_devices):
+            count = (
+                sum(1 for _, (mapped_room, _) in OUTLET_ROOM_MAP.items()
+                    if mapped_room == name)
+                if kind == 'outlet' else 1
+            )
+            extra.extend({'type': kind, 'room': name} for _ in range(max(1, count)))
+        log.info('[Discovery] Observed unconfigured device: %s/%s.', room, dev)
+        try:
+            await publish_discovery(
+                self._mqtt, self._config, extra_devices=extra, reset_retained=False
+            )
+        except Exception:
+            self._discovered_devices.discard(key)
+            log.exception('[Discovery] Failed to register %s/%s.', room, dev)
+
     async def _read_loop(self) -> None:
         log.info('[Bridge] Read loop started.')
         while True:
@@ -108,16 +187,46 @@ class KocomBridge:
     async def _poll_loop(self) -> None:
         log.info('[Bridge] Poll loop started.')
         await asyncio.sleep(3)
+        await self._discovery_scan_once()
         while True:
             await self._poll_once()
             await asyncio.sleep(POLLING_INTERVAL)
 
+    async def _discovery_scan_once(self) -> None:
+        """재시작 직후 안전한 조회를 보내 설정 밖 장치를 다시 발견한다.
+
+        상태 조회만 지원하는 조명·콘센트·난방·에어컨 장치만 대상으로 한다.
+        환기장치·공기질 센서는 오탐 방지를 위해 자동 스캔에서 제외하고, config에 명시된 경우에만 주기적으로 조회한다.
+        가스·엘리베이터·현관 이벤트 센서는 조회하지 않는다.
+        """
+        log.info('[Discovery] Starting one-time safe RS485 device scan.')
+        # 콘센트는 독립된 물리 주소 8개를 각각 조회한다.
+        for packet in self._ctrl.build_all_outlet_queries():
+            await self._tx_queue.put(packet)
+            await asyncio.sleep(0.3)
+
+        # 나머지 장치는 기존 방 코드 체계로 조회한다.
+        for dev in ('light', 'thermo', 'aircon'):
+            for room in ROOM_CODE:
+                await self._tx_queue.put(self._ctrl.build_query(dev, room))
+                await asyncio.sleep(0.3)
+        log.info('[Discovery] Safe device scan queries queued.')
+
     async def _poll_once(self) -> None:
-        for entry in self._config.get_devices():
-            dev = entry.get('type', '')
+        # devices 배열은 Discovery 개수를 표현하기 위해 같은 (type, room)이
+        # 반복된다. 폴링은 물리 장치/논리 방 조합마다 한 번만 수행한다.
+        targets = {
+            (entry.get('type', ''), entry.get('room', 'livingroom'))
+            for entry in self._config.get_devices()
+        } | self._discovered_devices
+        for dev, room in sorted(targets):
             if dev in NO_POLL_DEVICES or dev not in CODE_DEVICE:
                 continue
-            room = entry.get('room', 'livingroom')
+            if dev == 'outlet':
+                for packet in self._ctrl.build_outlet_queries(room):
+                    await self._tx_queue.put(packet)
+                    await asyncio.sleep(0.5)
+                continue
             await self._tx_queue.put(self._ctrl.build_query(dev, room))
             await asyncio.sleep(0.5)
 
@@ -308,22 +417,6 @@ class KocomBridge:
                 return []
             return self._ctrl.build_command('elevator', 'myhome', cmd)
 
-        # kocom/{room}/fan/set_speed/command
-        if 'fan' in parts and 'set_speed' in parts:
-            return self._ctrl.build_command('fan', parts[1], 'speed', speed=cmd)
-
-        # kocom/{room}/fan/set_timer/command
-        if 'fan' in parts and 'set_timer' in parts:
-            return self._ctrl.build_command('fan', parts[1], 'timer', hours=cmd)
-
-        # kocom/{room}/fan/set_preset_mode/command
-        if 'fan' in parts and 'set_preset_mode' in parts:
-            return self._ctrl.build_command('fan', parts[1], 'preset', preset=cmd)
-
-        # kocom/{room}/fan/command
-        if 'fan' in parts:
-            return self._ctrl.build_command('fan', parts[1], cmd)
-
         # kocom/myhome/query/command
         if 'query' in parts and cmd == 'PRESS':
             asyncio.get_running_loop().create_task(self._poll_once())
@@ -404,6 +497,9 @@ async def main() -> None:
     while True:
         try:
             async with _make_client(mqtt_cfg) as client:
+                # retained Discovery wildcard 구독으로 실제 브로커에 남아 있는
+                # 모든 코콤 엔티티 설정을 먼저 열거·삭제한다.
+                await _clear_retained_kocom_discovery(client)
                 bridge = KocomBridge(config, client)
                 await client.subscribe('kocom/#', qos=0)
                 await client.publish(AVAILABILITY_TOPIC, b'online', qos=1, retain=True)

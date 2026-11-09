@@ -15,7 +15,7 @@ from const import (
     PT_BROADCAST, PT_SEND, SEQ_FIRST,
     CMD_STATE, CMD_ON, CMD_OFF, CMD_MOTION, CMD_QUERY,
     CMD_TIME_SET, CMD_TIME_REQ, CMD_CUTOFF_ON, CMD_CUTOFF_OFF,
-    CODE_DEVICE, ROOM_NAME, ROOM_CODE,
+    CODE_DEVICE, ROOM_NAME, ROOM_CODE, OUTLET_ROOM_MAP, OUTLET_ADDRESS_MAP,
     AIRCON_HVAC_CODE, AIRCON_HVAC_NAME,
     AIRCON_FAN_CODE, AIRCON_FAN_NAME,
     VENT_PRESET_NAME, VENT_PRESET_CODE,
@@ -26,6 +26,7 @@ from models import PacketFrame
 log = logging.getLogger(__name__)
 
 StateCallback = Callable[[str, dict], Awaitable[None]]
+DeviceCallback = Callable[[str, str], Awaitable[None]]
 
 
 class KocomController:
@@ -36,8 +37,9 @@ class KocomController:
     build_command / build_query 로 송신 패킷 바이트를 생성한다.
     """
 
-    def __init__(self, on_state: StateCallback, config) -> None:
+    def __init__(self, on_state: StateCallback, config, on_device: DeviceCallback | None = None) -> None:
         self._on_state      = on_state
+        self._on_device     = on_device
         self._config        = config
         self._rx_buf        = bytearray()
         self._state_cache:   dict[str, dict]  = {}   # 커맨드 조립용 최신 상태
@@ -103,6 +105,32 @@ class KocomController:
             return
 
         dt = frame.dev_type
+        # 환기장치·공기질은 월패드에서 사용하지 않는 세대가 많다.
+        # 자동 발견은 하지 않고 config에 명시적으로 활성화한 경우에만 처리한다.
+        if dt in ('fan', 'airquality'):
+            configured = any(
+                entry.get('type') == dt
+                and entry.get('room', 'livingroom') == self._room(frame.dev_room)
+                for entry in self._config.get_devices()
+            )
+            if not configured:
+                return
+
+        discoverable = {
+            'light': frame.command == CMD_STATE,
+            'outlet': frame.command == CMD_STATE,
+            'thermo': frame.command == CMD_STATE,
+            'aircon': frame.command == CMD_STATE,
+        }
+        if frame.is_state_report and discoverable.get(dt, False) and self._on_device:
+            if dt == 'outlet':
+                mapped = OUTLET_ROOM_MAP.get(frame.dev_room)
+                room = mapped[0] if mapped else None
+            else:
+                room = ROOM_NAME.get(frame.dev_room)
+            if room:
+                await self._on_device(dt, room)
+
         if dt == 'light':
             if frame.dev_room == 0xFF:
                 await self._pub_cutoff(frame)
@@ -116,14 +144,14 @@ class KocomController:
             await self._pub_aircon(frame)
         elif dt == 'fan':
             await self._pub_fan(frame)
+        elif dt == 'airquality':
+            await self._pub_airquality(frame)
         elif dt == 'gas':
             await self._pub_gas(frame)
         elif dt == 'elevator':
             await self._pub_elevator(frame)
         elif dt == 'motion':
             await self._pub_motion(frame)
-        elif dt == 'airquality':
-            await self._pub_airquality(frame)
         elif dt == 'timesync':
             # 월패드가 0x86으로 보내는 시각 브로드캐스트 (YY MM DD HH MM SS)
             if frame.command == CMD_ON:
@@ -168,6 +196,19 @@ class KocomController:
     def _room(self, room_byte: int) -> str:
         return ROOM_NAME.get(room_byte, f'room{room_byte}')
 
+    def _switch_count(self, dev: str, room: str) -> int:
+        configured = sum(
+            1 for entry in self._config.get_devices()
+            if entry.get('type') == dev
+            and entry.get('room', 'livingroom') == room
+        )
+        if configured:
+            return configured
+        if dev == 'outlet':
+            return sum(1 for _, (mapped_room, _) in OUTLET_ROOM_MAP.items()
+                       if mapped_room == room)
+        return 1
+
     # ── 장치별 파싱 및 발행 ──────────────────────────────────────
     async def _pub_cutoff(self, frame: PacketFrame) -> None:
         """전체 소등 브로드캐스트 (0x09, 방 코드 0xFF).
@@ -189,13 +230,28 @@ class KocomController:
         # 에코를 반영하면 장치가 거부한 채널까지 켜진 것으로 잘못 표시된다.
         if frame.command != CMD_STATE or not frame.is_state_report:
             return
+        if dev == 'outlet':
+            mapped = OUTLET_ROOM_MAP.get(frame.dev_room)
+            if mapped is None:
+                log.debug('[Outlet] Ignore unknown physical address 0x%02x', frame.dev_room)
+                return
+            room, index = mapped
+            # config가 없으면 물리 주소 매핑에 정의된 채널 수를 사용한다.
+            count = self._switch_count('outlet', room)
+            if index > count:
+                return
+            topic = f'kocom/{room}/outlet/state'
+            state = dict(self._state_cache.get(topic, {}))
+            key = 'outlet' if count == 1 else f'outlet_{index}'
+            state[key] = 'on' if frame.payload[0] == 0xFF else 'off'
+            await self._notify(topic, state)
+            return
+
         room  = self._room(frame.dev_room)
         count = self._config.get_switch_count(dev, room)
         if count == 1:
-            # 단일 장치: 번호 없이 key = dev (e.g. 'light')
             state = {dev: ('on' if frame.payload[0] == 0xFF else 'off')}
         else:
-            # 복수 장치: 순번 포함 key = dev_N (e.g. 'light_1', 'light_2')
             state = {
                 f'{dev}_{i+1}': ('on' if frame.payload[i] == 0xFF else 'off')
                 for i in range(count)
@@ -459,10 +515,37 @@ class KocomController:
         return PACKET_PREFIX + body + bytes([chk]) + PACKET_SUFFIX
 
     def build_query(self, dev: str, room: str) -> bytes:
-        """장치 상태 조회 패킷 생성."""
-        dev_code  = CODE_DEVICE[dev]
-        room_code = ROOM_CODE.get(room, 0x00)
-        return self._make_packet(dev_code, room_code, 0x01, 0x00, 0x3A, bytes(8))
+        """장치 상태 조회 패킷 생성. 콘센트는 첫 번째 물리 주소를 사용한다."""
+        dev_code = CODE_DEVICE[dev]
+        if dev == 'outlet':
+            room_code = OUTLET_ADDRESS_MAP.get((room, 1))
+            if room_code is None:
+                raise ValueError(f'No outlet address configured for room: {room}')
+        else:
+            room_code = ROOM_CODE.get(room, 0x00)
+        return self._make_packet(dev_code, room_code, 0x01, 0x00, CMD_QUERY, bytes(8))
+
+    def build_outlet_queries(self, room: str) -> list[bytes]:
+        """논리 방의 설정된 콘센트 각각을 물리 주소로 조회한다."""
+        count = self._switch_count('outlet', room)
+        packets = []
+        for index in range(1, count + 1):
+            address = OUTLET_ADDRESS_MAP.get((room, index))
+            if address is None:
+                log.warning('[Outlet] No physical address for %s outlet %d', room, index)
+                continue
+            packets.append(self._make_packet(
+                CODE_DEVICE['outlet'], address, 0x01, 0x00, CMD_QUERY, bytes(8)
+            ))
+        return packets
+
+    def build_all_outlet_queries(self) -> list[bytes]:
+        """설정과 무관하게 알려진 콘센트 물리 주소를 안전하게 한 번씩 조회한다."""
+        return [
+            self._make_packet(CODE_DEVICE['outlet'], address, 0x01, 0x00,
+                              CMD_QUERY, bytes(8))
+            for address in sorted(OUTLET_ROOM_MAP)
+        ]
 
     def build_command(self, dev: str, room: str, action: str, **kwargs) -> List[bytes]:
         """
@@ -497,11 +580,29 @@ class KocomController:
           index (int): 장치 번호 (1-based). 두 자리 숫자(e.g. 12)는 1번·2번 동시 제어.
         """
         dest_dev  = CODE_DEVICE[dev]
-        dest_room = ROOM_CODE.get(room, 0x00)
         cache_key = f'kocom/{room}/{dev}/state'
         cached    = self._state_cache.get(cache_key, {})
+        count = self._switch_count(dev, room)
 
-        count = self._config.get_switch_count(dev, room)
+        if dev == 'outlet':
+            requested = kwargs.get('index', 1)
+            if requested == 'all' or action in ('all_on', 'all_off'):
+                indices = range(1, count + 1)
+            else:
+                indices = [int(ch) for ch in str(requested) if ch.isdigit() and 1 <= int(ch) <= count]
+            packets = []
+            onoff = 0xFF if action in ('on', 'all_on') else 0x00
+            for index in indices:
+                address = OUTLET_ADDRESS_MAP.get((room, index))
+                if address is None:
+                    log.warning('[Outlet] No physical address for %s outlet %d', room, index)
+                    continue
+                data = bytearray(8)
+                data[0] = onoff
+                packets.append(self._make_packet(dest_dev, address, 0x01, 0x00, CMD_STATE, bytes(data)))
+            return packets
+
+        dest_room = ROOM_CODE.get(room, 0x00)
         data  = bytearray(8)
         if count == 1:
             if cached.get(dev) == 'on':

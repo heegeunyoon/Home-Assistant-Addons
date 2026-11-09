@@ -32,6 +32,14 @@ import aiomqtt  # type: ignore
 from const import SW_VERSION, ROOM_CODE, VENT_PRESET_SUPPORTED
 
 AVAILABILITY_TOPIC = 'kocom/bridge/availability'
+
+# 이전 버전이 발행했지만 지금은 만들지 않는 엔티티의 Discovery 토픽.
+# retain으로 브로커에 남아 있으면 HA가 엔티티를 계속 유지하므로, 빈 페이로드를
+# retain으로 발행해 지운다 (MQTT Discovery의 엔티티 삭제 규칙).
+OBSOLETE_DISCOVERY_TOPICS = [
+    # 엘리베이터 층수 — 이 세대는 층 정보 바이트가 항상 00이라 2026.09.26.1에서 제거
+    'homeassistant/sensor/kocom_elevator_floor/config',
+]
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
 
 log = logging.getLogger(__name__)
@@ -71,9 +79,9 @@ def _rname(room: str) -> str:
 def _discovery_topic_candidates(occ_total: Counter) -> set[str]:
     """현재/과거 설정에서 생길 수 있는 방별 Discovery 토픽 후보를 만든다.
 
-    MQTT retained 메시지는 브로커에서 wildcard 구독으로 목록을 열거할 수
-    없으므로, 이 애드온이 사용하는 고정된 토픽 규칙을 기준으로 후보를 만든다.
-    단일 장치 토픽과 번호형(최대 기존 정리 범위 8개)을 모두 포함한다.
+    주 시작 루틴은 wildcard 구독으로 현재 retained 토픽을 먼저 정리한다.
+    여기서는 구버전/기존 규칙으로 생성된 토픽을 보완 정리할 수 있도록
+    알려진 단일·번호형(최대 8개) 후보도 구성한다.
     """
     topics: set[str] = set()
 
@@ -85,6 +93,10 @@ def _discovery_topic_candidates(occ_total: Counter) -> set[str]:
                 topics.add(
                     f'homeassistant/{component}/kocom_{room}_{kind}{suffix}/config'
                 )
+                if n:
+                    topics.add(
+                        f'homeassistant/{component}/kocom_{room}_{kind}_{n}/config'
+                    )
 
         topics.update({
             f'homeassistant/fan/kocom_{room}_fan/config',
@@ -134,7 +146,10 @@ def _sub_device(room: str, kind: str, kind_ko: str) -> dict:
     }
 
 
-async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
+async def publish_discovery(
+    mqtt: aiomqtt.Client, config, extra_devices: list[dict] | None = None,
+    reset_retained: bool = True,
+) -> None:
     """devices 목록을 순회하며 HA MQTT Discovery 설정 발행.
 
     처리 흐름:
@@ -148,7 +163,10 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
     모든 발행은 retain=True로 이루어지므로, HA가 재시작하더라도
     브로커에 남아 있는 설정을 즉시 다시 받아 엔티티를 복원할 수 있다.
     """
-    dev_list = config.get_devices()
+    dev_list = list(config.get_devices())
+    for item in extra_devices or []:
+        if item not in dev_list:
+            dev_list.append(item)
 
     # (type, room) 조합의 총 등장 횟수 — 단일/복수 판별에 사용
     occ_total: Counter = Counter(
@@ -157,7 +175,16 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
     # 순회 중 각 (type, room)의 현재 순번 추적 (1부터 증가)
     occ_seq: dict[tuple, int] = {}
 
-    # 이번 실행에서 발행한 토픽과 과거 설정의 잔존 토픽을 비교해 정리한다.
+    # retained Discovery는 브로커에 남으므로 시작 시 관리 대상 후보를 전부
+    # 삭제한 뒤 config 장치만 즉시 재등록한다. config 외 장치는 이번 실행 중
+    # 실제 상태 프레임을 관측한 뒤에만 다시 등록한다.
+    if reset_retained:
+        reset_topics = _discovery_topic_candidates(occ_total)
+        for topic in sorted(reset_topics):
+            await mqtt.publish(topic, b'', retain=True)
+        log.info('[Discovery] Cleared %d retained candidates before rebuild.', len(reset_topics))
+
+    # 이번 실행에서 발행한 토픽 집합.
     published_topics: set[str] = set()
 
     async def pub(topic: str, payload: dict) -> None:
@@ -173,7 +200,7 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
         published_topics.add(topic)
 
     for entry in dev_list:
-        dev  = entry.get('type', '')                 # 기기 종류 (light, outlet, fan, ...)
+        dev  = entry.get('type', '')                 # 기기 종류
         room = entry.get('room', 'livingroom')       # 방 이름 (미지정 시 거실)
         rko  = _rname(room)                          # 한국어 방 이름
         key  = (dev, room)
@@ -320,8 +347,12 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
                 # 온도를 되돌리려 하지 않는다.
                 'pr_mode_cmd_t':   f'kocom/room/thermo/{idx}/away/command',
                 'pr_mode_stat_t':  f'kocom/room/thermo/{idx}/state',
+                # 상태가 'none'이면 HA가 preset 해제로 처리하고, 사용자가 '없음'을
+                # 고르면 HA가 'none'을 명령 토픽에 보낸다. 단 preset_modes 목록에는
+                # 'none'을 넣으면 안 된다 — HA가 Discovery 설정 전체를 거부한다
+                # ("preset_modes must not include preset mode 'none'").
                 'pr_mode_val_tpl': "{{ 'away' if value_json.away == 'true' else 'none' }}",
-                'pr_modes': ['none', 'away'],
+                'pr_modes': ['away'],
                 'min_temp': 5, 'max_temp': 30, 'temp_step': 1,  # 설정 가능 범위 5~30°C, 1°C 단위
                 'qos': 0,
                 'uniq_id': f'kocom_wallpad_thermo_{room}',
@@ -548,17 +579,8 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
         'device':  _BASE_DEVICE,
     })
 
-    # 현재 설정에서 발행하지 않는 과거 retained Discovery를 제거한다.
-    # 빈 payload + retain=True는 MQTT 브로커에서 해당 retained 메시지를 삭제한다.
-    stale_topics = _discovery_topic_candidates(occ_total) - published_topics
-    for topic in sorted(stale_topics):
-        await mqtt.publish(topic, b'', retain=True)
-
-    if stale_topics:
-        log.info(
-            '[Discovery] Removed %d stale retained discovery topics.',
-            len(stale_topics),
-        )
+    # 시작 시 전체 후보를 초기화했다. 실행 중 추가 발견(reset_retained=False)에서는
+    # 기존 retained Discovery를 지우지 않는다.
     log.info(
         '[Discovery] HA MQTT discovery published (%d topics).',
         len(published_topics),
