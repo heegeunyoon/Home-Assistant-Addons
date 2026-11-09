@@ -26,6 +26,7 @@ from models import PacketFrame
 log = logging.getLogger(__name__)
 
 StateCallback = Callable[[str, dict], Awaitable[None]]
+DeviceCallback = Callable[[str, str], Awaitable[None]]
 
 
 class KocomController:
@@ -36,8 +37,9 @@ class KocomController:
     build_command / build_query 로 송신 패킷 바이트를 생성한다.
     """
 
-    def __init__(self, on_state: StateCallback, config) -> None:
+    def __init__(self, on_state: StateCallback, config, on_device: DeviceCallback | None = None) -> None:
         self._on_state      = on_state
+        self._on_device     = on_device
         self._config        = config
         self._rx_buf        = bytearray()
         self._state_cache:   dict[str, dict]  = {}   # 커맨드 조립용 최신 상태
@@ -103,6 +105,22 @@ class KocomController:
             return
 
         dt = frame.dev_type
+        discoverable = {
+            'light': frame.command == CMD_STATE,
+            'outlet': frame.command == CMD_STATE,
+            'thermo': frame.command == CMD_STATE,
+            'aircon': frame.command == CMD_STATE,
+            'airquality': frame.command in (CMD_STATE, CMD_QUERY),
+        }
+        if frame.is_state_report and discoverable.get(dt, False) and self._on_device:
+            if dt == 'outlet':
+                mapped = OUTLET_ROOM_MAP.get(frame.dev_room)
+                room = mapped[0] if mapped else None
+            else:
+                room = ROOM_NAME.get(frame.dev_room)
+            if room:
+                await self._on_device(dt, room)
+
         if dt == 'light':
             if frame.dev_room == 0xFF:
                 await self._pub_cutoff(frame)
@@ -115,7 +133,7 @@ class KocomController:
         elif dt == 'aircon':
             await self._pub_aircon(frame)
         elif dt == 'fan':
-            await self._pub_fan(frame)
+            log.debug('[Parser] Ventilation frame ignored (unsupported).')
         elif dt == 'gas':
             await self._pub_gas(frame)
         elif dt == 'elevator':
