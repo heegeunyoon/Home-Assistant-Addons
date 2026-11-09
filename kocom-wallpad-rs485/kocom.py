@@ -22,6 +22,44 @@ from const import (
 
 AVAILABILITY_TOPIC = 'kocom/bridge/availability'
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
+
+async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
+    """브로커가 보유한 코콤 MQTT Discovery retained 설정을 구독해 전부 제거한다.
+
+    MQTT는 retained 메시지를 wildcard 구독에 전달하므로 별도 DB/파일 없이
+    현재 브로커에 남은 실제 토픽을 열거할 수 있다. kocom_ 노드만 대상으로 해
+    다른 통합의 Discovery 설정은 건드리지 않는다.
+    """
+    topic_filter = 'homeassistant/+/kocom_+/config'
+    await client.subscribe(topic_filter, qos=0)
+    iterator = client.messages.__aiter__()
+    topics: set[str] = set()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 10.0
+    quiet_until = loop.time() + 0.8
+
+    while loop.time() < deadline:
+        timeout = min(quiet_until - loop.time(), deadline - loop.time())
+        if timeout <= 0:
+            break
+        try:
+            msg = await asyncio.wait_for(anext(iterator), timeout=timeout)
+        except asyncio.TimeoutError:
+            break
+        topic = str(msg.topic)
+        if getattr(msg, 'retain', False):
+            parts = topic.split('/')
+            if (len(parts) == 4 and parts[0] == 'homeassistant'
+                    and parts[2].startswith('kocom_') and parts[3] == 'config'):
+                topics.add(topic)
+        quiet_until = loop.time() + 0.8
+
+    for topic in sorted(topics):
+        await client.publish(topic, b'', qos=0, retain=True)
+    await client.unsubscribe(topic_filter)
+    log.info('[Discovery] Removed %d retained Kocom Discovery topics from broker.', len(topics))
+    return len(topics)
+
 from controller import KocomController
 from discovery import publish_discovery
 from options import Options
@@ -449,6 +487,9 @@ async def main() -> None:
     while True:
         try:
             async with _make_client(mqtt_cfg) as client:
+                # retained Discovery wildcard 구독으로 실제 브로커에 남아 있는
+                # 모든 코콤 엔티티 설정을 먼저 열거·삭제한다.
+                await _clear_retained_kocom_discovery(client)
                 bridge = KocomBridge(config, client)
                 await client.subscribe('kocom/#', qos=0)
                 await client.publish(AVAILABILITY_TOPIC, b'online', qos=1, retain=True)
