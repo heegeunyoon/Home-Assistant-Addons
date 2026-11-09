@@ -81,8 +81,14 @@ class KocomBridge:
         if dev in ('gas', 'elevator', 'motion', 'fan'):
             return
         self._discovered_devices.add(key)
-        extra = [{'type': kind, 'room': name}
-                 for kind, name in sorted(self._discovered_devices)]
+        extra: list[dict] = []
+        for kind, name in sorted(self._discovered_devices):
+            count = (
+                sum(1 for _, (mapped_room, _) in OUTLET_ROOM_MAP.items()
+                    if mapped_room == name)
+                if kind == 'outlet' else 1
+            )
+            extra.extend({'type': kind, 'room': name} for _ in range(max(1, count)))
         log.info('[Discovery] Observed unconfigured device: %s/%s.', room, dev)
         try:
             await publish_discovery(
