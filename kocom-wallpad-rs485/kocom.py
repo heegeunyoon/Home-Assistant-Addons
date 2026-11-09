@@ -219,7 +219,7 @@ class KocomBridge:
             for entry in self._config.get_devices()
         } | self._discovered_devices
         for dev, room in sorted(targets):
-            if dev in NO_POLL_DEVICES or dev in ('fan', 'airquality') or dev not in CODE_DEVICE:
+            if dev in NO_POLL_DEVICES or dev not in CODE_DEVICE:
                 continue
             if dev == 'outlet':
                 for packet in self._ctrl.build_outlet_queries(room):
