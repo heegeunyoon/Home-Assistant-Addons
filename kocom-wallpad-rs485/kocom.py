@@ -49,7 +49,14 @@ class KocomBridge:
         self._mqtt     = mqtt
         self._rs485    = AsyncRS485.from_config(config)
         self._tx_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._ctrl     = KocomController(on_state=self._publish, config=config)
+        self._discovered_devices: set[tuple[str, str]] = set()
+        self._configured_devices = {
+            (entry.get('type', ''), entry.get('room', 'livingroom'))
+            for entry in config.get_devices()
+        }
+        self._ctrl = KocomController(
+            on_state=self._publish, config=config, on_device=self._on_device_seen
+        )
         self._last_drift: float = 0.0
 
     # ── 공개 진입점 ──────────────────────────────────────────────
@@ -66,6 +73,25 @@ class KocomBridge:
             await self._rs485.close()
 
     # ── 수신 루프 ────────────────────────────────────────────────
+    async def _on_device_seen(self, dev: str, room: str) -> None:
+        """실제 상태 프레임으로 처음 확인된 미설정 장치를 이번 실행에만 등록."""
+        key = (dev, room)
+        if key in self._configured_devices or key in self._discovered_devices:
+            return
+        if dev in ('gas', 'elevator', 'motion', 'fan'):
+            return
+        self._discovered_devices.add(key)
+        extra = [{'type': kind, 'room': name}
+                 for kind, name in sorted(self._discovered_devices)]
+        log.info('[Discovery] Observed unconfigured device: %s/%s.', room, dev)
+        try:
+            await publish_discovery(
+                self._mqtt, self._config, extra_devices=extra, reset_retained=False
+            )
+        except Exception:
+            self._discovered_devices.discard(key)
+            log.exception('[Discovery] Failed to register %s/%s.', room, dev)
+
     async def _read_loop(self) -> None:
         log.info('[Bridge] Read loop started.')
         while True:
@@ -316,22 +342,6 @@ class KocomBridge:
                 asyncio.get_running_loop().create_task(self._call_elevator_tcpip())
                 return []
             return self._ctrl.build_command('elevator', 'myhome', cmd)
-
-        # kocom/{room}/fan/set_speed/command
-        if 'fan' in parts and 'set_speed' in parts:
-            return self._ctrl.build_command('fan', parts[1], 'speed', speed=cmd)
-
-        # kocom/{room}/fan/set_timer/command
-        if 'fan' in parts and 'set_timer' in parts:
-            return self._ctrl.build_command('fan', parts[1], 'timer', hours=cmd)
-
-        # kocom/{room}/fan/set_preset_mode/command
-        if 'fan' in parts and 'set_preset_mode' in parts:
-            return self._ctrl.build_command('fan', parts[1], 'preset', preset=cmd)
-
-        # kocom/{room}/fan/command
-        if 'fan' in parts:
-            return self._ctrl.build_command('fan', parts[1], cmd)
 
         # kocom/myhome/query/command
         if 'query' in parts and cmd == 'PRESS':
