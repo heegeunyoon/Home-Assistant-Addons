@@ -129,7 +129,7 @@ ELEVATOR_EVENT: dict[int, str] = {
 
 # ── 폴링 제외 장치 ───────────────────────────────────────────────
 NO_POLL_DEVICES = frozenset({
-    'wallpad', 'elevator', 'motion', 'airquality', 'lightcutoff',
+    'wallpad', 'elevator', 'motion', 'lightcutoff',
     'shutoff2', 'timesync', 'away',
 })
 
