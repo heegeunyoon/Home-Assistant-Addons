@@ -30,7 +30,7 @@ async def _clear_retained_kocom_discovery(client: aiomqtt.Client) -> int:
     현재 브로커에 남은 실제 토픽을 열거할 수 있다. kocom_ 노드만 대상으로 해
     다른 통합의 Discovery 설정은 건드리지 않는다.
     """
-    topic_filter = 'homeassistant/+/kocom_+/config'
+    topic_filter = 'homeassistant/+/+/config'
     await client.subscribe(topic_filter, qos=0)
     iterator = client.messages.__aiter__()
     topics: set[str] = set()
