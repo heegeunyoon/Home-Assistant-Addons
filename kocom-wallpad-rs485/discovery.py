@@ -173,7 +173,9 @@ async def publish_discovery(mqtt: aiomqtt.Client, config) -> None:
         published_topics.add(topic)
 
     for entry in dev_list:
-        dev  = entry.get('type', '')                 # 기기 종류 (light, outlet, fan, ...)
+        dev  = entry.get('type', '')                 # 기기 종류
+        if dev == 'fan':
+            continue  # 이 세대는 RS-485 환기장치 제어를 사용하지 않음
         room = entry.get('room', 'livingroom')       # 방 이름 (미지정 시 거실)
         rko  = _rname(room)                          # 한국어 방 이름
         key  = (dev, room)
