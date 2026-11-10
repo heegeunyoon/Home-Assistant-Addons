@@ -345,38 +345,31 @@ class KocomController:
     async def _pub_elevator(self, frame: PacketFrame) -> None:
         """엘리베이터 호출·도착 이벤트.
 
-        실측 결과 이벤트는 커맨드가 아니라 payload[0]으로 구분된다.
-          cmd 0x01 + payload[0]=0x00 → 호출  (현관 버튼: 0x44 → 월패드)
-          cmd 0x01 + payload[0]=0x03 → 도착  (월패드 → 0x44)
-          cmd 0x00                   → 미지원 프레임 (12/12 무응답)
+        실측 패킷의 command(byte 9)와 방향을 함께 판별한다.
+          CMD_ON    + payload[0]=0x00, elevator(0x44) -> wallpad(0x01): 호출 이벤트
+          CMD_STATE + payload[0]=0x03, wallpad(0x01) -> elevator(0x44): 도착 보고
+          CMD_ON    + payload[0]=0x03, wallpad(0x01) -> elevator(0x44): 도착 통보 변형
 
-        커맨드와 방향만으로 판정하면 도착을 호출로 오독한다. 도착 통보는
-        월패드가 보내므로 '장치 발신만 신뢰' 규칙의 예외로 둔다.
-
-        월패드 화면에서 호출한 경우는 버스에 프레임이 남지 않아 감지할 수 없다.
+        CMD_STATE는 여기서 패킷 타입(0x0B)이 아니라 command 필드(byte 9)의 값
+        0x00을 뜻한다. ACK(패킷 타입 0x0D)는 상태로 반영하지 않는다.
         """
         if frame.is_ack:
             return
 
-        # 실측 프레임 방향:
-        #   호출  : elevator(0x44) -> wallpad(0x01), CMD_ON, payload[0]=0x00
-        #   도착  : wallpad(0x01) -> elevator(0x44), CMD_ON, payload[0]=0x03
-        # CMD_STATE(0x00)는 수신되지만 의미가 아직 검증되지 않아 상태로 해석하지 않는다.
-        if frame.command != CMD_ON:
-            if frame.command == CMD_STATE:
-                log.debug('[Elevator] Ignore unverified CMD_STATE payload=%s', frame.payload.hex())
+        event_code = frame.payload[0]
+        if frame.command == CMD_ON and event_code == 0x00:
+            event = 'called'
+            expected_direction = frame.src[0] == 0x44 and frame.dest[0] == 0x01
+        elif frame.command in (CMD_STATE, CMD_ON) and event_code == 0x03:
+            event = 'arrival'
+            expected_direction = frame.src[0] == 0x01 and frame.dest[0] == 0x44
+        else:
+            log.debug(
+                '[Elevator] Ignore unsupported command/payload command=0x%02x payload[0]=0x%02x',
+                frame.command, event_code,
+            )
             return
 
-        event = ELEVATOR_EVENT.get(frame.payload[0])
-        if event is None:
-            log.debug('[Elevator] Unknown payload[0]=0x%02x', frame.payload[0])
-            return
-
-        expected_direction = (
-            frame.src[0] == 0x44 and frame.dest[0] == 0x01
-            if event == 'called'
-            else frame.src[0] == 0x01 and frame.dest[0] == 0x44
-        )
         if not expected_direction:
             log.debug(
                 '[Elevator] Ignore unexpected direction event=%s src=%s dest=%s',
