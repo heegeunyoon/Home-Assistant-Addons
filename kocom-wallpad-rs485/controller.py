@@ -404,8 +404,9 @@ class KocomController:
                 except ValueError:
                     pass
 
-        await self._notify('kocom/myhome/elevator/state', state)
+        # 타이머는 MQTT 발행 완료가 아니라 이벤트 수신 시점을 기준으로 시작한다.
         self._schedule_elevator_idle()
+        await self._notify('kocom/myhome/elevator/state', state)
 
     def _schedule_elevator_idle(self) -> None:
         """마지막 엘리베이터 이벤트 이후 10초간 추가 이벤트가 없으면 idle로 전환."""
