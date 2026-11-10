@@ -25,6 +25,7 @@ from models import PacketFrame
 log = logging.getLogger(__name__)
 
 ELEVATOR_IDLE_TIMEOUT_SECONDS = 10.0
+ELEVATOR_CALL_TIMEOUT_SECONDS = 60.0
 
 StateCallback = Callable[[str, dict], Awaitable[None]]
 DeviceCallback = Callable[[str, str], Awaitable[None]]
@@ -47,6 +48,7 @@ class KocomController:
         self._pub_cache:     dict[str, dict]  = {}   # 발행 중복 억제용
         self._device_storage: dict[str, Any]  = {}
         self._elevator_idle_task: asyncio.Task | None = None
+        self._elevator_call_task: asyncio.Task | None = None
 
         # ── 진단 카운터 ─────────────────────────────────────────
         # 월패드·EW11이 살아 있는지 HA에서 확인하기 위한 지표.
@@ -404,12 +406,36 @@ class KocomController:
                 except ValueError:
                     pass
 
-        # 타이머는 MQTT 발행 완료가 아니라 이벤트 수신 시점을 기준으로 시작한다.
-        self._schedule_elevator_idle()
+        # 호출은 도착 이벤트를 기다린다. 도착 이후에만 짧은 idle 타이머를 쓴다.
+        if event == 'called':
+            self._schedule_elevator_call_timeout()
+        else:
+            self._cancel_elevator_call_timeout()
+            self._schedule_elevator_idle()
         await self._notify('kocom/myhome/elevator/state', state)
 
+    def _cancel_elevator_call_timeout(self) -> None:
+        if self._elevator_call_task and not self._elevator_call_task.done():
+            self._elevator_call_task.cancel()
+        self._elevator_call_task = None
+
+    def _schedule_elevator_call_timeout(self) -> None:
+        """호출 후 도착 이벤트가 오지 않을 때만 적용하는 안전 타임아웃."""
+        self._cancel_elevator_call_timeout()
+        self._elevator_call_task = asyncio.create_task(self._publish_elevator_call_timeout())
+
+    async def _publish_elevator_call_timeout(self) -> None:
+        try:
+            await asyncio.sleep(ELEVATOR_CALL_TIMEOUT_SECONDS)
+            await self._notify('kocom/myhome/elevator/state', {
+                'state': 'off',
+                'direction': 'idle',
+            })
+        except asyncio.CancelledError:
+            return
+
     def _schedule_elevator_idle(self) -> None:
-        """마지막 엘리베이터 이벤트 이후 10초간 추가 이벤트가 없으면 idle로 전환."""
+        """도착 이벤트 이후 10초간 추가 이벤트가 없으면 idle로 전환."""
         if self._elevator_idle_task and not self._elevator_idle_task.done():
             self._elevator_idle_task.cancel()
         self._elevator_idle_task = asyncio.create_task(self._publish_elevator_idle())
@@ -422,16 +448,15 @@ class KocomController:
                 'direction': 'idle',
             })
         except asyncio.CancelledError:
-            # 새 호출/도착 이벤트가 들어오면 이전 타이머는 조용히 폐기한다.
             return
 
     async def publish_elevator_called(self) -> None:
         """Publish a call request after its RS-485 write succeeds.
 
         A successful write does not prove that the elevator accepted the call.
-        A later received elevator event remains authoritative.
+        Keep the requested state until arrival or the longer call timeout.
         """
-        self._schedule_elevator_idle()
+        self._schedule_elevator_call_timeout()
         await self._notify('kocom/myhome/elevator/state', {
             'state': 'on',
             'direction': 'called',
