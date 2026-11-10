@@ -421,6 +421,9 @@ class KocomController:
 
     def _schedule_elevator_call_timeout(self) -> None:
         """호출 후 도착 이벤트가 오지 않을 때만 적용하는 안전 타임아웃."""
+        if self._elevator_idle_task and not self._elevator_idle_task.done():
+            self._elevator_idle_task.cancel()
+        self._elevator_idle_task = None
         self._cancel_elevator_call_timeout()
         self._elevator_call_task = asyncio.create_task(self._publish_elevator_call_timeout())
 
