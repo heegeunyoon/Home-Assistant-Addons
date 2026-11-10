@@ -22,6 +22,15 @@ class ElevatorEventTests(unittest.IsolatedAsyncioTestCase):
 
         self.controller = KocomController(on_state, FakeConfig())
 
+    async def asyncTearDown(self):
+        for task in (
+            self.controller._elevator_idle_task,
+            self.controller._elevator_call_task,
+        ):
+            if task and not task.done():
+                task.cancel()
+        await asyncio.sleep(0)
+
     async def run_packet(self, packet_hex):
         frame = PacketFrame(bytes.fromhex(packet_hex))
         self.assertTrue(frame.is_valid, packet_hex)
