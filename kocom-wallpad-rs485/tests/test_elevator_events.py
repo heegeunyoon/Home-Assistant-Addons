@@ -28,7 +28,6 @@ class ElevatorEventTests(unittest.IsolatedAsyncioTestCase):
         await self.controller._pub_elevator(frame)
 
     async def test_captured_call_event_is_published(self):
-        self.run_packet  # keep async test helpers discoverable to type checkers
         await self.run_packet("aa5530bc0001004400010000000000000000320d0d")
         self.assertEqual(
             self.published,
