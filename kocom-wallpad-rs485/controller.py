@@ -19,7 +19,6 @@ from const import (
     AIRCON_HVAC_CODE, AIRCON_HVAC_NAME,
     AIRCON_FAN_CODE, AIRCON_FAN_NAME,
     VENT_PRESET_NAME, VENT_PRESET_CODE,
-    ELEVATOR_EVENT,
 )
 from models import PacketFrame
 
