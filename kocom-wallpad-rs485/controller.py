@@ -355,12 +355,33 @@ class KocomController:
 
         월패드 화면에서 호출한 경우는 버스에 프레임이 남지 않아 감지할 수 없다.
         """
-        if frame.command != CMD_ON or frame.is_ack:
+        if frame.is_ack:
+            return
+
+        # 실측 프레임 방향:
+        #   호출  : elevator(0x44) -> wallpad(0x01), CMD_ON, payload[0]=0x00
+        #   도착  : wallpad(0x01) -> elevator(0x44), CMD_ON, payload[0]=0x03
+        # CMD_STATE(0x00)는 수신되지만 의미가 아직 검증되지 않아 상태로 해석하지 않는다.
+        if frame.command != CMD_ON:
+            if frame.command == CMD_STATE:
+                log.debug('[Elevator] Ignore unverified CMD_STATE payload=%s', frame.payload.hex())
             return
 
         event = ELEVATOR_EVENT.get(frame.payload[0])
         if event is None:
             log.debug('[Elevator] Unknown payload[0]=0x%02x', frame.payload[0])
+            return
+
+        expected_direction = (
+            frame.src[0] == 0x44 and frame.dest[0] == 0x01
+            if event == 'called'
+            else frame.src[0] == 0x01 and frame.dest[0] == 0x44
+        )
+        if not expected_direction:
+            log.debug(
+                '[Elevator] Ignore unexpected direction event=%s src=%s dest=%s',
+                event, frame.src.hex(), frame.dest.hex(),
+            )
             return
 
         state: dict = {
