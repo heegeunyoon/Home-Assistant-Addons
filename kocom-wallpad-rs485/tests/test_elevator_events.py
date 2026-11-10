@@ -86,13 +86,14 @@ class ElevatorEventTests(unittest.IsolatedAsyncioTestCase):
     async def test_called_does_not_return_to_idle_before_arrival(self):
         with patch("controller.ELEVATOR_IDLE_TIMEOUT_SECONDS", 0.01):
             with patch("controller.ELEVATOR_CALL_TIMEOUT_SECONDS", 0.08):
-                await self.controller.publish_elevator_called()
-                await asyncio.sleep(0.03)
-                self.assertEqual(self.published[-1][1]["direction"], "called")
-                await self.run_packet("aa5530bc0044000100000300000000000000340d0d")
-                await asyncio.sleep(0.03)
-                self.assertEqual(self.published[-1][1]["direction"], "arrival")
-                await asyncio.sleep(0.03)
+                with patch("controller.ELEVATOR_IDLE_TIMEOUT_SECONDS", 0.06):
+                    await self.controller.publish_elevator_called()
+                    await asyncio.sleep(0.03)
+                    self.assertEqual(self.published[-1][1]["direction"], "called")
+                    await self.run_packet("aa5530bc0044000100000300000000000000340d0d")
+                    await asyncio.sleep(0.03)
+                    self.assertEqual(self.published[-1][1]["direction"], "arrival")
+                    await asyncio.sleep(0.04)
         self.assertEqual(self.published[-1][1]["direction"], "idle")
 
     async def test_called_falls_back_to_idle_after_call_timeout(self):
