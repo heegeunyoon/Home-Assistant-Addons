@@ -52,7 +52,7 @@ class ElevatorEventTests(unittest.TestCase):
 
     def test_wrong_direction_is_ignored(self):
         # Arrival payload from elevator -> wallpad is not a valid arrival report.
-        self.run_packet("aa5530bc0001004400010300000000000000330d0d")
+        self.run_packet("aa5530bc0001004400010300000000000000350d0d")
         self.assertEqual(self.published, [])
 
     def test_ack_is_ignored(self):
