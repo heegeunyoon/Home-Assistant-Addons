@@ -121,7 +121,8 @@ ELEVATOR_DIR: dict[int, str] = {
     0x03: 'arrival',
 }
 
-# 실측: cmd 0x01의 payload[0]이 이벤트를 나타낸다. cmd 0x00은 미지원 프레임.
+# 엘리베이터 이벤트는 command(byte 9)와 payload[0] 조합으로 판별한다.
+# CMD_ON + 0x00 = 호출, CMD_STATE + 0x03 = 도착 보고.
 ELEVATOR_EVENT: dict[int, str] = {
     0x00: 'called',
     0x03: 'arrival',
