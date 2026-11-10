@@ -407,7 +407,7 @@ class KocomController:
                     pass
 
         # 호출은 도착 이벤트를 기다린다. 도착 이후에만 짧은 idle 타이머를 쓴다.
-        if event == 'called':
+        if state['direction'] == 'called':
             self._schedule_elevator_call_timeout()
         else:
             self._cancel_elevator_call_timeout()
