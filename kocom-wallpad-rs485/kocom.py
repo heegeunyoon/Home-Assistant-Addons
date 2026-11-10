@@ -95,7 +95,7 @@ class KocomBridge:
         self._config   = config
         self._mqtt     = mqtt
         self._rs485    = AsyncRS485.from_config(config)
-        self._tx_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._tx_queue: asyncio.Queue[tuple[bytes, bool]] = asyncio.Queue()
         self._discovered_devices: set[tuple[str, str]] = set()
         self._configured_devices = {
             (entry.get('type', ''), entry.get('room', 'livingroom'))
@@ -160,7 +160,7 @@ class KocomBridge:
     async def _sender_loop(self) -> None:
         log.info('[Bridge] Sender loop started.')
         while True:
-            packet = await self._tx_queue.get()
+            packet, elevator_call = await self._tx_queue.get()
             if not self._rs485.is_connected():
                 log.warning('[TX] Not connected, dropping packet.')
                 self._tx_queue.task_done()
@@ -177,6 +177,9 @@ class KocomBridge:
                 ok = await self._rs485.send(packet)
                 if ok:
                     self._ctrl.diag['tx_total'] += 1
+                    if elevator_call:
+                        # Successful write is not proof of elevator acceptance.
+                        await self._ctrl.publish_elevator_called()
                     break
                 if attempt < SEND_RETRY:
                     await asyncio.sleep(SEND_RETRY_GAP)
@@ -202,13 +205,13 @@ class KocomBridge:
         log.info('[Discovery] Starting one-time safe RS485 device scan.')
         # 콘센트는 독립된 물리 주소 8개를 각각 조회한다.
         for packet in self._ctrl.build_all_outlet_queries():
-            await self._tx_queue.put(packet)
+            await self._tx_queue.put((packet, False))
             await asyncio.sleep(0.3)
 
         # 나머지 장치는 기존 방 코드 체계로 조회한다.
         for dev in ('light', 'thermo', 'aircon'):
             for room in ROOM_CODE:
-                await self._tx_queue.put(self._ctrl.build_query(dev, room))
+                await self._tx_queue.put((self._ctrl.build_query(dev, room), False))
                 await asyncio.sleep(0.3)
         log.info('[Discovery] Safe device scan queries queued.')
 
@@ -224,10 +227,10 @@ class KocomBridge:
                 continue
             if dev == 'outlet':
                 for packet in self._ctrl.build_outlet_queries(room):
-                    await self._tx_queue.put(packet)
+                    await self._tx_queue.put((packet, False))
                     await asyncio.sleep(0.5)
                 continue
-            await self._tx_queue.put(self._ctrl.build_query(dev, room))
+            await self._tx_queue.put((self._ctrl.build_query(dev, room), False))
             await asyncio.sleep(0.5)
 
     # ── 진단 루프 ────────────────────────────────────────────────
@@ -276,7 +279,7 @@ class KocomBridge:
         rooms = {e.get('room', 'livingroom')
                  for e in self._config.get_devices() if e.get('type') == 'light'}
         for room in sorted(rooms):
-            await self._tx_queue.put(self._ctrl.build_query('light', room))
+            await self._tx_queue.put((self._ctrl.build_query('light', room), False))
             await asyncio.sleep(0.5)
 
     # ── 외출모드 매크로 ──────────────────────────────────────────
@@ -290,7 +293,7 @@ class KocomBridge:
         for i, pkt in enumerate(packets):
             if i:
                 await asyncio.sleep(AWAY_STEP_GAP)
-            await self._tx_queue.put(pkt)
+            await self._tx_queue.put((pkt, False))
 
         mode = self._config.get('Away', 'mode', fallback='entrance')
         log.info('[Away] %s %s — %d packet(s) sent.',
@@ -333,8 +336,10 @@ class KocomBridge:
             log.warning('[CMD] Route error %s: %r', topic, e)
             return
 
+        is_elevator_call = ('elevator' in parts and cmd == 'on'
+                            and self._config.get('Elevator', 'type', fallback='rs485') != 'tcpip')
         for pkt in packets:
-            await self._tx_queue.put(pkt)
+            await self._tx_queue.put((pkt, is_elevator_call))
 
     def _route(self, parts: list[str], cmd: str) -> list[bytes]:
         """토픽 parts → controller.build_command 호출."""

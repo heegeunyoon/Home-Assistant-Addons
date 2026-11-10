@@ -425,6 +425,18 @@ class KocomController:
             # 새 호출/도착 이벤트가 들어오면 이전 타이머는 조용히 폐기한다.
             return
 
+    async def publish_elevator_called(self) -> None:
+        """Publish a call request after its RS-485 write succeeds.
+
+        A successful write does not prove that the elevator accepted the call.
+        A later received elevator event remains authoritative.
+        """
+        self._schedule_elevator_idle()
+        await self._notify('kocom/myhome/elevator/state', {
+            'state': 'on',
+            'direction': 'called',
+        })
+
     async def _pub_motion(self, frame: PacketFrame) -> None:
         """현관 방범 유닛(0x60)의 두 가지 프레임.
 

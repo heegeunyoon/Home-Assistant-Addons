@@ -56,6 +56,14 @@ class ElevatorEventTests(unittest.IsolatedAsyncioTestCase):
         await self.run_packet("aa5530dc0044000100010300000000000000550d0d")
         self.assertEqual(self.published, [])
 
+    async def test_successful_tx_call_state_is_published(self):
+        await self.controller.publish_elevator_called()
+        self.assertEqual(
+            self.published,
+            [("kocom/myhome/elevator/state",
+              {"state": "on", "direction": "called"})],
+        )
+
     async def test_state_returns_to_idle_after_ten_seconds(self):
         with patch("controller.ELEVATOR_IDLE_TIMEOUT_SECONDS", 0.01):
             await self.run_packet("aa5530bc0001004400010000000000000000320d0d")
