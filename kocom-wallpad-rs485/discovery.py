@@ -39,6 +39,8 @@ AVAILABILITY_TOPIC = 'kocom/bridge/availability'
 OBSOLETE_DISCOVERY_TOPICS = [
     # 엘리베이터 층수 — 이 세대는 층 정보 바이트가 항상 00이라 2026.09.26.1에서 제거
     'homeassistant/sensor/kocom_elevator_floor/config',
+    # switch에서 momentary button으로 변경
+    'homeassistant/switch/kocom_elevator/config',
 ]
 DIAG_TOPIC         = 'kocom/bridge/diagnostics'
 
@@ -111,7 +113,7 @@ def _discovery_topic_candidates(occ_total: Counter) -> set[str]:
             topics.add(f'homeassistant/sensor/kocom_{room}_aq_{aq_key}/config')
 
     topics.update({
-        'homeassistant/switch/kocom_elevator/config',
+        'homeassistant/button/kocom_elevator_call/config',
         'homeassistant/sensor/kocom_elevator_direction/config',
     })
     return topics
@@ -374,19 +376,16 @@ async def publish_discovery(
                 'device':  _sub_device(room, 'gas', '가스밸브'),
             })
 
-        # ── 엘리베이터 호출 (switch) + 층수/방향 센서 ────────────────────
-        # 세대 공용 기능이므로 방 구분 없이 고정 토픽(kocom/myhome/…)을 쓰고,
-        # 기기 정보도 방별이 아닌 공용 _BASE_DEVICE에 묶는다.
+        # ── 엘리베이터 호출 (momentary button) + 상태 센서 ───────────────
+        # 호출은 지속 상태가 아닌 단발 명령이므로 switch가 아닌 button으로 노출한다.
+        # 세대 공용 기능이므로 고정 토픽과 월패드 본체 기기를 사용한다.
         elif dev == 'elevator':
-            # 호출 스위치: 켜면 엘리베이터를 호출하고, 도착하면 상태가 꺼짐으로 복귀
-            await pub('homeassistant/switch/kocom_elevator/config', {
-                'name':    '엘리베이터',
+            await pub('homeassistant/button/kocom_elevator_call/config', {
+                'name':    '엘리베이터 호출',
                 'cmd_t':   'kocom/myhome/elevator/command',
-                'stat_t':  'kocom/myhome/elevator/state',
-                'val_tpl': '{{ value_json.state }}',
-                'pl_on': 'on', 'pl_off': 'off',
+                'pl_prs':  'on',
                 'ic': 'mdi:elevator', 'qos': 0,
-                'uniq_id': 'kocom_wallpad_elevator',
+                'uniq_id': 'kocom_wallpad_elevator_call',
                 'device':  _BASE_DEVICE,
             })
             # 호출·도착 이벤트 센서.
