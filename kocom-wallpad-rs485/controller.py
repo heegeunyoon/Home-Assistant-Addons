@@ -200,6 +200,20 @@ class KocomController:
     def _room(self, room_byte: int) -> str:
         return ROOM_NAME.get(room_byte, f'room{room_byte}')
 
+    def _gas_state_room(self, reported_room: str) -> str:
+        """가스밸브의 HA 표시 구역. RS-485 주소와 물리적 설치 구역은 다를 수 있다."""
+        for entry in self._config.get_devices():
+            if entry.get('type') == 'gas':
+                return entry.get('room', reported_room)
+        return reported_room
+
+    def _gas_protocol_room(self, fallback_room: str) -> int:
+        """가스밸브 제어에 사용할 프로토콜 주소. HA 표시 구역과 별도 설정한다."""
+        configured = self._config.get(
+            'Away', 'gas_room', fallback=fallback_room
+        )
+        return ROOM_CODE.get(configured, ROOM_CODE.get(fallback_room, 0x00))
+
     def _switch_count(self, dev: str, room: str) -> int:
         configured = sum(
             1 for entry in self._config.get_devices()
@@ -342,7 +356,10 @@ class KocomController:
         """
         if frame.command not in (CMD_ON, CMD_OFF) or not frame.is_state_report:
             return
-        room  = self._room(frame.dev_room)
+        # 가스 장치의 실측 프로토콜 주소는 0x00이지만 물리적 설치 위치는 주방이다.
+        # HA 상태 토픽은 devices 설정의 논리 방을 따르고, 프레임 주소는 표시 위치로
+        # 사용하지 않는다.
+        room  = self._gas_state_room(self._room(frame.dev_room))
         state = 'on' if frame.command == CMD_ON else 'off'
         await self._notify(f'kocom/{room}/gas/state', {'state': state})
 
@@ -812,7 +829,9 @@ class KocomController:
 
     def _build_gas(self, room: str) -> bytes:
         """가스밸브 차단 패킷 (off 전용)."""
-        dest_dev, dest_room = CODE_DEVICE['gas'], ROOM_CODE.get(room, 0x00)
+        dest_dev = CODE_DEVICE['gas']
+        # HA 기기 구역(kitchen)과 RS-485 장치 주소(실측 0x00)는 별개다.
+        dest_room = self._gas_protocol_room(room)
         return self._make_packet(dest_dev, dest_room, 0x01, 0x00, 0x02, bytes(8))
 
     def _build_elevator(self) -> bytes:
@@ -856,8 +875,7 @@ class KocomController:
         if mode != 'macro':
             return [self._build_away_notify(on)]
 
-        gas_room = ROOM_CODE.get(
-            self._config.get('Away', 'gas_room', fallback='livingroom'), 0x00)
+        gas_room = self._gas_protocol_room('livingroom')
 
         if not on:
             return [
