@@ -135,7 +135,7 @@
     "rs485_floor": 7,
     "init_temp": 23,
     "away_mode": "entrance",
-    "away_gas_room": "kitchen",
+    "away_gas_room": "livingroom",
     "log_recv_hex": false,
     "log_mqtt_publish": false
   },
