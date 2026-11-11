@@ -426,8 +426,9 @@ async def publish_discovery(
                 'min_temp': 18, 'max_temp': 30, 'temp_step': 1,  # 설정 가능 범위 18~30°C
                 'qos': 0,
                 'uniq_id': f'kocom_wallpad_aircon_{room}',
-                # 에어컨은 별도 HA 기기를 만들지 않고 월패드 본체에 직접 소속시킨다.
-                'device':  _BASE_DEVICE,
+                # 난방 온도조절기와 동일하게 방별 독립 기기로 등록하고,
+                # via_device로 월패드 본체에 연결한다.
+                'device':  _sub_device(room, 'aircon', '에어컨'),
             })
 
         # ── 동작 감지 센서 (binary_sensor 컴포넌트, device_class=motion) ─
