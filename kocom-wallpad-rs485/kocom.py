@@ -336,6 +336,14 @@ class KocomBridge:
             log.warning('[CMD] Route error %s: %r', topic, e)
             return
 
+        # Select 선택값은 조명 OFF 중에도 상태 토픽에 유지한다.
+        if 'light' in parts and 'level' in parts:
+            try:
+                index = int(parts[3]) if parts[3] != 'level' else 1
+            except (ValueError, IndexError):
+                index = 1
+            await self._ctrl.set_light_level(parts[1], index, cmd)
+
         is_elevator_call = ('elevator' in parts and cmd == 'on'
                             and self._config.get('Elevator', 'type', fallback='rs485') != 'tcpip')
         for pkt in packets:
