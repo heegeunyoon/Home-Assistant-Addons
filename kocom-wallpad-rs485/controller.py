@@ -255,21 +255,29 @@ class KocomController:
         count = self._config.get_switch_count(dev, room)
         # 조명은 디밍 단계가 0x01 / 0x02 / 0xFF로 보고된다.
         # 0x00만 OFF로 취급하고, 콘센트는 기존처럼 0xFF만 ON으로 판정한다.
+        topic = f'kocom/{room}/{dev}/state'
+        # OFF 보고(0x00)는 현재 밝기 선택을 지우지 않는다.
+        state = dict(self._state_cache.get(topic, {}))
         if count == 1:
             raw = frame.payload[0]
             is_on = raw != 0x00 if dev == 'light' else raw == 0xFF
-            state = {dev: ('on' if is_on else 'off')}
+            state[dev] = 'on' if is_on else 'off'
             if dev == 'light':
                 state['light_brightness'] = {0x00: 0, 0x01: 85, 0x02: 170, 0xFF: 255}.get(raw, 255 if is_on else 0)
+                level_name = {0x01: '1단계', 0x02: '2단계', 0xFF: '3단계'}.get(raw)
+                if level_name:
+                    state['light_level'] = level_name
         else:
-            state = {}
             for i in range(count):
                 raw = frame.payload[i]
                 is_on = raw != 0x00 if dev == 'light' else raw == 0xFF
                 state[f'{dev}_{i+1}'] = 'on' if is_on else 'off'
                 if dev == 'light':
                     state[f'light_{i+1}_brightness'] = {0x00: 0, 0x01: 85, 0x02: 170, 0xFF: 255}.get(raw, 255 if is_on else 0)
-        await self._notify(f'kocom/{room}/{dev}/state', state)
+                    level_name = {0x01: '1단계', 0x02: '2단계', 0xFF: '3단계'}.get(raw)
+                    if level_name:
+                        state[f'light_{i+1}_level'] = level_name
+        await self._notify(topic, state)
 
     async def _pub_thermo(self, frame: PacketFrame) -> None:
         if frame.command != CMD_STATE or not frame.is_state_report:
@@ -655,6 +663,20 @@ class KocomController:
             return self.build_away(action == 'on')
         raise ValueError(f'build_command: unsupported device "{dev}"')
 
+    async def set_light_level(self, room: str, index: int, level: str) -> bool:
+        """선택한 디밍 단계를 상태 캐시에 반영해 HA Select에도 즉시 표시한다."""
+        level_map = {'1단계': 0x01, '2단계': 0x02, '3단계': 0xFF,
+                     '1': 0x01, '2': 0x02, '3': 0xFF}
+        if room != 'livingroom' or index != 1 or str(level) not in level_map:
+            return False
+        topic = f'kocom/{room}/light/state'
+        state = dict(self._state_cache.get(topic, {}))
+        state['light_1_level'] = {
+            0x01: '1단계', 0x02: '2단계', 0xFF: '3단계'
+        }[level_map[str(level)]]
+        await self._notify(topic, state)
+        return True
+
     # ── 장치별 커맨드 빌더 ───────────────────────────────────────
     def _build_switch(self, dev: str, room: str, action: str, **kwargs) -> List[bytes]:
         """
@@ -741,7 +763,11 @@ class KocomController:
         while n > 0:
             idx = n % 10
             if idx > 0:
-                data[idx - 1] = onoff
+                value = onoff
+                if dev == 'light' and action == 'on' and room == 'livingroom' and idx == 1:
+                    selected = cached.get('light_1_level', '3단계')
+                    value = {'1단계': 0x01, '2단계': 0x02, '3단계': 0xFF}.get(selected, 0xFF)
+                data[idx - 1] = value
                 packets.append(self._make_packet(dest_dev, dest_room, 0x01, 0x00, 0x00, bytes(data)))
             n //= 10
         return packets
