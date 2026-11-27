@@ -699,13 +699,21 @@ class KocomController:
                         data[i] = 0x01 if brightness <= 85 else 0x02 if brightness <= 170 else 0xFF
                     else:
                         data[i] = 0xFF
-        if dev == 'light' and action == 'brightness':
-            try:
-                requested_brightness = max(1, min(255, int(float(kwargs.get('brightness', 255)))))
-            except (TypeError, ValueError):
-                requested_brightness = 255
-            # 월패드에서 실측한 디밍 상태값을 제어값으로도 사용한다.
-            level = 0x01 if requested_brightness <= 85 else 0x02 if requested_brightness <= 170 else 0xFF
+        if dev == 'light' and action in ('level', 'brightness'):
+            if action == 'level':
+                level_map = {'1단계': 0x01, '2단계': 0x02, '3단계': 0xFF,
+                             '1': 0x01, '2': 0x02, '3': 0xFF}
+                level = level_map.get(str(kwargs.get('level', '3단계')))
+                if level is None:
+                    log.warning('[Light] Invalid dimming level %r', kwargs.get('level'))
+                    return []
+            else:
+                try:
+                    requested_brightness = max(1, min(255, int(float(kwargs.get('brightness', 255)))))
+                except (TypeError, ValueError):
+                    requested_brightness = 255
+                # 구버전 brightness 명령 호환.
+                level = 0x01 if requested_brightness <= 85 else 0x02 if requested_brightness <= 170 else 0xFF
             requested_index = int(kwargs.get('index', 1))
             if count == 1:
                 data[0] = level
