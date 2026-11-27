@@ -694,7 +694,11 @@ class KocomController:
         else:
             for i in range(8):
                 if cached.get(f'{dev}_{i+1}') == 'on':
-                    data[i] = 0xFF
+                    if dev == 'light':
+                        brightness = int(cached.get(f'light_{i+1}_brightness', 255) or 255)
+                        data[i] = 0x01 if brightness <= 85 else 0x02 if brightness <= 170 else 0xFF
+                    else:
+                        data[i] = 0xFF
         if dev == 'light' and action == 'brightness':
             try:
                 requested_brightness = max(1, min(255, int(float(kwargs.get('brightness', 255)))))
