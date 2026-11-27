@@ -256,13 +256,19 @@ class KocomController:
         # 조명은 디밍 단계가 0x01 / 0x02 / 0xFF로 보고된다.
         # 0x00만 OFF로 취급하고, 콘센트는 기존처럼 0xFF만 ON으로 판정한다.
         if count == 1:
-            is_on = frame.payload[0] != 0x00 if dev == 'light' else frame.payload[0] == 0xFF
+            raw = frame.payload[0]
+            is_on = raw != 0x00 if dev == 'light' else raw == 0xFF
             state = {dev: ('on' if is_on else 'off')}
+            if dev == 'light':
+                state['light_brightness'] = {0x00: 0, 0x01: 85, 0x02: 170, 0xFF: 255}.get(raw, 255 if is_on else 0)
         else:
-            state = {
-                f'{dev}_{i+1}': ('on' if (frame.payload[i] != 0x00 if dev == 'light' else frame.payload[i] == 0xFF) else 'off')
-                for i in range(count)
-            }
+            state = {}
+            for i in range(count):
+                raw = frame.payload[i]
+                is_on = raw != 0x00 if dev == 'light' else raw == 0xFF
+                state[f'{dev}_{i+1}'] = 'on' if is_on else 'off'
+                if dev == 'light':
+                    state[f'light_{i+1}_brightness'] = {0x00: 0, 0x01: 85, 0x02: 170, 0xFF: 255}.get(raw, 255 if is_on else 0)
         await self._notify(f'kocom/{room}/{dev}/state', state)
 
     async def _pub_thermo(self, frame: PacketFrame) -> None:
@@ -688,7 +694,27 @@ class KocomController:
         else:
             for i in range(8):
                 if cached.get(f'{dev}_{i+1}') == 'on':
-                    data[i] = 0xFF
+                    if dev == 'light':
+                        brightness = int(cached.get(f'light_{i+1}_brightness', 255) or 255)
+                        data[i] = 0x01 if brightness <= 85 else 0x02 if brightness <= 170 else 0xFF
+                    else:
+                        data[i] = 0xFF
+        if dev == 'light' and action == 'brightness':
+            try:
+                requested_brightness = max(1, min(255, int(float(kwargs.get('brightness', 255)))))
+            except (TypeError, ValueError):
+                requested_brightness = 255
+            # 월패드에서 실측한 디밍 상태값을 제어값으로도 사용한다.
+            level = 0x01 if requested_brightness <= 85 else 0x02 if requested_brightness <= 170 else 0xFF
+            requested_index = int(kwargs.get('index', 1))
+            if count == 1:
+                data[0] = level
+            elif 1 <= requested_index <= count:
+                data[requested_index - 1] = level
+            else:
+                log.warning('[Light] Invalid brightness channel %s', requested_index)
+                return []
+            return [self._make_packet(dest_dev, dest_room, 0x01, 0x00, 0x00, bytes(data))]
 
         # 방 전체 켜기/끄기는 8바이트를 모두 채워 한 프레임으로 보낸다.
         # 월패드가 쓰는 와일드카드이며, 장치가 실제 채널 수만 반영해 응답한다.
