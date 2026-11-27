@@ -253,11 +253,14 @@ class KocomController:
 
         room  = self._room(frame.dev_room)
         count = self._config.get_switch_count(dev, room)
+        # 조명은 디밍 단계가 0x01 / 0x02 / 0xFF로 보고된다.
+        # 0x00만 OFF로 취급하고, 콘센트는 기존처럼 0xFF만 ON으로 판정한다.
         if count == 1:
-            state = {dev: ('on' if frame.payload[0] == 0xFF else 'off')}
+            is_on = frame.payload[0] != 0x00 if dev == 'light' else frame.payload[0] == 0xFF
+            state = {dev: ('on' if is_on else 'off')}
         else:
             state = {
-                f'{dev}_{i+1}': ('on' if frame.payload[i] == 0xFF else 'off')
+                f'{dev}_{i+1}': ('on' if (frame.payload[i] != 0x00 if dev == 'light' else frame.payload[i] == 0xFF) else 'off')
                 for i in range(count)
             }
         await self._notify(f'kocom/{room}/{dev}/state', state)
