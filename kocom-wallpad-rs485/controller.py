@@ -671,7 +671,8 @@ class KocomController:
             return False
         topic = f'kocom/{room}/light/state'
         state = dict(self._state_cache.get(topic, {}))
-        state['light_1_level'] = {
+        level_key = 'light_1_level' if self._switch_count('light', room) > 1 else 'light_level'
+        state[level_key] = {
             0x01: '1단계', 0x02: '2단계', 0xFF: '3단계'
         }[level_map[str(level)]]
         await self._notify(topic, state)
@@ -765,7 +766,8 @@ class KocomController:
             if idx > 0:
                 value = onoff
                 if dev == 'light' and action == 'on' and room == 'livingroom' and idx == 1:
-                    selected = cached.get('light_1_level', '3단계')
+                    level_key = 'light_1_level' if count > 1 else 'light_level'
+                    selected = cached.get(level_key, '3단계')
                     value = {'1단계': 0x01, '2단계': 0x02, '3단계': 0xFF}.get(selected, 0xFF)
                 data[idx - 1] = value
                 packets.append(self._make_packet(dest_dev, dest_room, 0x01, 0x00, 0x00, bytes(data)))
