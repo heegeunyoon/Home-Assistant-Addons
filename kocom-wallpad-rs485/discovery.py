@@ -227,6 +227,10 @@ async def publish_discovery(
                     'cmd_t':        f'kocom/{room}/light/command',
                     'stat_t':       f'kocom/{room}/light/state',
                     'stat_val_tpl': '{{ value_json.light }}',
+                    'bri_cmd_t': f'kocom/{room}/light/brightness/command',
+                    'bri_stat_t': f'kocom/{room}/light/state',
+                    'bri_val_tpl': '{{ value_json.light_brightness | int(0) }}',
+                    'bri_scl': 255,
                     'pl_on': 'on', 'pl_off': 'off', 'qos': 0,
                     'uniq_id': f'kocom_wallpad_light_{room}',
                     'device':  _sub_device(room, 'light', '조명'),
@@ -238,6 +242,10 @@ async def publish_discovery(
                     'stat_t':       f'kocom/{room}/light/state',
                     # 공유 상태 JSON에서 light_1, light_2 … 중 자기 값만 추출
                     'stat_val_tpl': '{{ value_json.light_' + str(n) + ' }}',
+                    'bri_cmd_t': f'kocom/{room}/light/{n}/brightness/command',
+                    'bri_stat_t': f'kocom/{room}/light/state',
+                    'bri_val_tpl': '{{ value_json.light_' + str(n) + '_brightness | int(0) }}',
+                    'bri_scl': 255,
                     'pl_on': 'on', 'pl_off': 'off', 'qos': 0,
                     # 같은 스위치 모듈이 제어하므로 조명 1·2는 한 device에 묶인다
                     'uniq_id': f'kocom_wallpad_light_{room}_{n}',
