@@ -715,6 +715,10 @@ class KocomController:
                 # 구버전 brightness 명령 호환.
                 level = 0x01 if requested_brightness <= 85 else 0x02 if requested_brightness <= 170 else 0xFF
             requested_index = int(kwargs.get('index', 1))
+            # 디밍 제어는 실기기에서 확인된 거실 1번 조명에만 허용한다.
+            if room != 'livingroom' or requested_index != 1:
+                log.warning('[Light] Dimming is only supported for livingroom light 1')
+                return []
             if count == 1:
                 data[0] = level
             elif 1 <= requested_index <= count:
