@@ -387,9 +387,19 @@ class KocomBridge:
             asyncio.get_running_loop().create_task(self._run_away_macro(cmd == 'on'))
             return []
 
-        # 조명 밝기 명령: HA brightness(1~255)를 월패드 3단계로 변환한다.
-        # 단일: kocom/{room}/light/brightness/command
-        # 복수: kocom/{room}/light/{n}/brightness/command
+        # 조명 디밍 단계 선택 명령.
+        # 단일: kocom/{room}/light/level/command
+        # 복수: kocom/{room}/light/{n}/level/command
+        if 'light' in parts and 'level' in parts:
+            index = 1
+            try:
+                index = int(parts[3]) if parts[3] != 'level' else 1
+            except (ValueError, IndexError):
+                index = 1
+            return self._ctrl.build_command('light', parts[1], 'level',
+                                            index=index, level=cmd)
+
+        # 구버전 밝기 토픽 호환: 기존 자동화가 brightness를 직접 발행해도 동작한다.
         if 'light' in parts and 'brightness' in parts:
             index = 1
             try:
