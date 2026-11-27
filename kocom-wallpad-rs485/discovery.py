@@ -237,16 +237,19 @@ async def publish_discovery(
                     'uniq_id': f'kocom_wallpad_light_{room}',
                     'device':  _sub_device(room, 'light', '조명'),
                 })
-                await pub(f'homeassistant/select/kocom_{room}_light_level/config', {
-                    'name': f'{rko} 조명 밝기 단계',
-                    'cmd_t': f'kocom/{room}/light/level/command',
-                    'stat_t': f'kocom/{room}/light/state',
-                    'val_tpl': "{{ {85: '1단계', 170: '2단계', 255: '3단계'}.get(value_json.light_brightness | int(0), '') }}",
-                    'ops': ['1단계', '2단계', '3단계'],
-                    'qos': 0,
-                    'uniq_id': f'kocom_wallpad_light_level_{room}',
-                    'device': _sub_device(room, 'light', '조명'),
-                })
+                # 디밍은 거실 조명 1번만 지원한다. 다른 방의 단일 조명에는
+                # 단계 선택 엔티티를 만들지 않는다.
+                if room == 'livingroom':
+                    await pub(f'homeassistant/select/kocom_{room}_light_level/config', {
+                        'name': f'{rko} 조명 밝기 단계',
+                        'cmd_t': f'kocom/{room}/light/level/command',
+                        'stat_t': f'kocom/{room}/light/state',
+                        'val_tpl': "{{ {85: '1단계', 170: '2단계', 255: '3단계'}.get(value_json.light_brightness | int(0), '') }}",
+                        'ops': ['1단계', '2단계', '3단계'],
+                        'qos': 0,
+                        'uniq_id': f'kocom_wallpad_light_level_{room}',
+                        'device': _sub_device(room, 'light', '조명'),
+                    })
             else:
                 await pub(f'homeassistant/light/kocom_{room}_light{n}/config', {
                     'name':         f'{rko} 조명 {n}',
@@ -259,16 +262,18 @@ async def publish_discovery(
                     'uniq_id': f'kocom_wallpad_light_{room}_{n}',
                     'device':  _sub_device(room, 'light', '조명'),
                 })
-                await pub(f'homeassistant/select/kocom_{room}_light{n}_level/config', {
-                    'name': f'{rko} 조명 {n} 밝기 단계',
-                    'cmd_t': f'kocom/{room}/light/{n}/level/command',
-                    'stat_t': f'kocom/{room}/light/state',
-                    'val_tpl': "{{ {85: '1단계', 170: '2단계', 255: '3단계'}.get(value_json.light_" + str(n) + "_brightness | int(0), '') }}",
-                    'ops': ['1단계', '2단계', '3단계'],
-                    'qos': 0,
-                    'uniq_id': f'kocom_wallpad_light_level_{room}_{n}',
-                    'device': _sub_device(room, 'light', '조명'),
-                })
+                # 거실 1번 조명만 3단계 디밍을 지원한다.
+                if room == 'livingroom' and n == 1:
+                    await pub(f'homeassistant/select/kocom_{room}_light{n}_level/config', {
+                        'name': f'{rko} 조명 {n} 밝기 단계',
+                        'cmd_t': f'kocom/{room}/light/{n}/level/command',
+                        'stat_t': f'kocom/{room}/light/state',
+                        'val_tpl': "{{ {85: '1단계', 170: '2단계', 255: '3단계'}.get(value_json.light_" + str(n) + "_brightness | int(0), '') }}",
+                        'ops': ['1단계', '2단계', '3단계'],
+                        'qos': 0,
+                        'uniq_id': f'kocom_wallpad_light_level_{room}_{n}',
+                        'device': _sub_device(room, 'light', '조명'),
+                    })
 
         # ── 콘센트 (switch 컴포넌트, device_class=outlet) ────────────────
         # 조명과 동일한 단일/복수 규칙을 따르며, HA에서는 스위치로 등록되지만
